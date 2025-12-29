@@ -83,6 +83,7 @@ elif victim_model_type == 'GEMMA7B':
     victim = VictimCache(victim_model_path,
                          VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device))
 elif victim_model_type == 'BiLSTM':
+    pretrained_model_victim = 'bert-base-uncased'  # BiLSTM uses BERT tokenizer
     victim = VictimCache(victim_model_path, VictimBiLSTM(victim_model_path, task, victim_device))
 
 # Load data
