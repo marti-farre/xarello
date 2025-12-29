@@ -42,8 +42,8 @@ elif victim_model == 'GEMMA7B':
     pretrained_model_here = PRETRAINED_GEMMA_7B
     victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
 
-TRAIN_SIZE = 320
-EVAL_SIZE = 40
+TRAIN_SIZE = 100
+EVAL_SIZE = 20
 
 if task == 'FC':
     all_texts = [
