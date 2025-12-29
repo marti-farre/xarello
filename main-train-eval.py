@@ -42,8 +42,8 @@ elif victim_model == 'GEMMA7B':
     pretrained_model_here = PRETRAINED_GEMMA_7B
     victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
 
-TRAIN_SIZE = 100
-EVAL_SIZE = 20
+TRAIN_SIZE = 3200
+EVAL_SIZE = 400
 
 if task == 'FC':
     all_texts = [
@@ -57,7 +57,7 @@ train_texts = all_texts[EVAL_SIZE:(EVAL_SIZE + TRAIN_SIZE)]
 print("Using train set size: "+str(len(train_texts))+" and eval set size: "+str(len(eval_texts)))
 
 TEXTS_IN_ROUND = len(train_texts)
-MAX_EPOCHS = 5
+MAX_EPOCHS = 20
 protected_tokens = ['~'] if task == 'FC' else []
 
 train_env = EnvAE(pretrained_model, train_texts, victim, attacker_device, static_embedding=True,
