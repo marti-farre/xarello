@@ -22,8 +22,14 @@ outpath_string = sys.argv[3]
 pretrained_model = "bert-base-cased"
 tokeniser = AutoTokenizer.from_pretrained(pretrained_model)
 
-attacker_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-victim_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        return torch.device('mps')
+    return torch.device('cpu')
+attacker_device = get_device()
+victim_device = get_device()
 
 #task = 'PR2'
 #victim_model = 'BiLSTM'
@@ -160,7 +166,7 @@ while True:
         # Make an action
         action = agent.choose_action(eval_observation)
         # Observe the result
-        train_observation, reward, terminated, truncated, _ = eval_env.step(action)
+        eval_observation, reward, terminated, truncated, _ = eval_env.step(action)
         print(eval_env.render())
         rewards_here.append(reward)
         # Finalise

@@ -10,6 +10,8 @@ from huggingface_hub import hf_hub_download
 # Embedding type selection: 'glove' (~400MB, allows more training data) or 'fasttext' (~7GB, better quality)
 EMBEDDING_TYPE = 'glove'
 
+_fasttext_model_cache = None
+
 
 def prepare_for_llm(observations, tokeniser):
     input_ids = []
@@ -124,8 +126,13 @@ def get_candidate_embeddings_llm(orig_texts, orig_tokens, replacement_tokens, BE
 
 def load_fastText_vectors():
     """Load FastText vectors (~7GB download, ~7GB in memory)"""
+    global _fasttext_model_cache
+    if _fasttext_model_cache is not None:
+        print("Using cached FastText model...")
+        return _fasttext_model_cache
     model_path = hf_hub_download(repo_id="facebook/fasttext-en-vectors", filename='model.bin')
     model = fasttext.load_model(model_path)
+    _fasttext_model_cache = model
     return model
 
 
@@ -166,7 +173,7 @@ def load_glove_vectors(glove_path=None):
 def get_candidate_embeddings_static(replacement_tokens, tokeniser):
     """Get embeddings for candidate replacement tokens using configured embedding type."""
     hidden_size = 300
-    embeddings = np.zeros(replacement_tokens.shape + (hidden_size,))
+    embeddings = np.zeros(replacement_tokens.shape + (hidden_size,), dtype=np.float16)
 
     if EMBEDDING_TYPE == 'fasttext':
         print("Reading static embedding dictionary (FastText)...")
