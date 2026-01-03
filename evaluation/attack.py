@@ -1,3 +1,4 @@
+import argparse
 import gc
 import os
 import pathlib
@@ -20,6 +21,7 @@ from victims.caching import VictimCache
 
 from env.EnvAE import EnvAE
 from evaluation.qattacker import QAttacker
+from defenses.preprocessing import get_defense
 
 # Attempt at determinism
 random.seed(10)
@@ -28,25 +30,84 @@ np.random.seed(0)
 
 # Running variables
 print("Preparing the environment...")
+
+# Default values
 task = 'PR2'
 targeted = True
 victim_model_type = 'BERT'
 attack_model_type = 'XARELLO'
 attack_model_variant = 'wide'
 out_dir = None
+defense_type = 'none'
+defense_param = 0.0
 data_path = pathlib.Path.home() / 'data' / 'BODEGA' / task
 victim_model_path = pathlib.Path.home() / 'data' / 'BODEGA' / task / (victim_model_type + '-512.pth')
-if len(sys.argv) >= 7:
+
+# Parse arguments - support both legacy positional args and new named args
+parser = argparse.ArgumentParser(description='XARELLO attack evaluation with optional defenses')
+parser.add_argument('--task', type=str, default=None, help='Task name (PR2, HN, FC, C19, RD)')
+parser.add_argument('--targeted', type=str, default=None, help='Targeted attack (true/false)')
+parser.add_argument('--attack', type=str, default=None, help='Attack model type (XARELLO, random)')
+parser.add_argument('--victim', type=str, default=None, help='Victim model type (BERT, BiLSTM, GEMMA)')
+parser.add_argument('--data_path', type=str, default=None, help='Path to data directory')
+parser.add_argument('--model_path', type=str, default=None, help='Path to victim model')
+parser.add_argument('--out_dir', type=str, default=None, help='Output directory')
+parser.add_argument('--defense', type=str, default='none',
+                    help='Defense type: none, spellcheck, noise, dropout')
+parser.add_argument('--defense_param', type=float, default=0.0,
+                    help='Defense parameter (noise_std or dropout_prob)')
+parser.add_argument('--defense_seed', type=int, default=42,
+                    help='Random seed for defense (for reproducibility)')
+
+# Check if using legacy positional args or new named args
+if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
+    # Legacy positional argument parsing
     task = sys.argv[1]
     targeted = (sys.argv[2].lower() == 'true')
     attack_model_type = sys.argv[3]
     victim_model_type = sys.argv[4]
     data_path = pathlib.Path(sys.argv[5])
     victim_model_path = pathlib.Path(sys.argv[6])
-    if len(sys.argv) == 8:
+    if len(sys.argv) >= 8 and not sys.argv[7].startswith('--'):
         out_dir = pathlib.Path(sys.argv[7])
+    # Check for defense args after positional args
+    remaining_args = [a for a in sys.argv[7:] if a.startswith('--')]
+    if remaining_args:
+        args, _ = parser.parse_known_args(remaining_args)
+        defense_type = args.defense
+        defense_param = args.defense_param
+        defense_seed = args.defense_seed
+    else:
+        defense_seed = 42
+else:
+    # Named argument parsing
+    args = parser.parse_args()
+    if args.task:
+        task = args.task
+    if args.targeted:
+        targeted = (args.targeted.lower() == 'true')
+    if args.attack:
+        attack_model_type = args.attack
+    if args.victim:
+        victim_model_type = args.victim
+    if args.data_path:
+        data_path = pathlib.Path(args.data_path)
+    if args.model_path:
+        victim_model_path = pathlib.Path(args.model_path)
+    if args.out_dir:
+        out_dir = pathlib.Path(args.out_dir)
+    defense_type = args.defense
+    defense_param = args.defense_param
+    defense_seed = args.defense_seed
 
-FILE_NAME = 'results_' + task + '_' + str(targeted) + '_' + attack_model_type + '_' + victim_model_type + '.txt'
+# Build output filename including defense info
+defense_suffix = ''
+if defense_type != 'none':
+    defense_suffix = f'_{defense_type}'
+    if defense_param > 0:
+        defense_suffix += f'_{defense_param}'
+
+FILE_NAME = f'results_{task}_{targeted}_{attack_model_type}_{victim_model_type}{defense_suffix}.txt'
 if out_dir and (out_dir / FILE_NAME).exists():
     print("Report found, exiting...")
     sys.exit()
@@ -72,19 +133,24 @@ else:
 print("Loading up victim model...")
 if victim_model_type == 'BERT':
     pretrained_model_victim = PRETRAINED_BERT
-    victim = VictimCache(victim_model_path,
-                         VictimTransformer(victim_model_path, task, pretrained_model_victim, False, victim_device))
+    base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, False, victim_device)
 elif victim_model_type == 'GEMMA':
     pretrained_model_victim = PRETRAINED_GEMMA_2B
-    victim = VictimCache(victim_model_path,
-                         VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device))
+    base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device)
 elif victim_model_type == 'GEMMA7B':
     pretrained_model_victim = PRETRAINED_GEMMA_7B
-    victim = VictimCache(victim_model_path,
-                         VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device))
+    base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device)
 elif victim_model_type == 'BiLSTM':
     pretrained_model_victim = 'bert-base-uncased'  # BiLSTM uses BERT tokenizer
-    victim = VictimCache(victim_model_path, VictimBiLSTM(victim_model_path, task, victim_device))
+    base_victim = VictimBiLSTM(victim_model_path, task, victim_device)
+
+# Apply defense wrapper if specified
+if defense_type != 'none':
+    print(f"Applying {defense_type} defense (param={defense_param})...")
+    defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed)
+    victim = VictimCache(victim_model_path, defended_victim)
+else:
+    victim = VictimCache(victim_model_path, base_victim)
 
 # Load data
 print("Loading data...")
@@ -155,6 +221,20 @@ end = time.time()
 evaluate_time = end - start
 
 # Print results
+print("=" * 50)
+print("EXPERIMENT CONFIGURATION")
+print("=" * 50)
+print(f"Task: {task}")
+print(f"Targeted: {targeted}")
+print(f"Attack: {attack_model_type}")
+print(f"Victim: {victim_model_type}")
+print(f"Defense: {defense_type}")
+if defense_type != 'none':
+    print(f"Defense param: {defense_param}")
+    print(f"Defense seed: {defense_seed}")
+print("=" * 50)
+print("RESULTS")
+print("=" * 50)
 print("Subset size: " + str(len(dataset)))
 print("Success score: " + str(score_success))
 print("Semantic score: " + str(score_semantic))
@@ -167,12 +247,21 @@ print("Total evaluation time: " + str(evaluate_time))
 
 if out_dir:
     with open(out_dir / FILE_NAME, 'w') as f:
+        f.write("# Experiment Configuration\n")
+        f.write(f"Task: {task}\n")
+        f.write(f"Targeted: {targeted}\n")
+        f.write(f"Attack: {attack_model_type}\n")
+        f.write(f"Victim: {victim_model_type}\n")
+        f.write(f"Defense: {defense_type}\n")
+        f.write(f"Defense param: {defense_param}\n")
+        f.write(f"Defense seed: {defense_seed}\n")
+        f.write("\n# Results\n")
         f.write("Subset size: " + str(len(dataset)) + '\n')
         f.write("Success score: " + str(score_success) + '\n')
         f.write("Semantic score: " + str(score_semantic) + '\n')
         f.write("Character score: " + str(score_character) + '\n')
         f.write("BODEGA score: " + str(score_BODEGA) + '\n')
         f.write("Queries per example: " + str(summary['Avg. Victim Model Queries']) + '\n')
-        f.write("Total attack time: " + str(end - start) + '\n')
-        f.write("Time per example: " + str((end - start) / len(dataset)) + '\n')
+        f.write("Total attack time: " + str(attack_time) + '\n')
+        f.write("Time per example: " + str((attack_time) / len(dataset)) + '\n')
         f.write("Total evaluation time: " + str(evaluate_time) + '\n')
