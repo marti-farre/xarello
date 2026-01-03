@@ -164,7 +164,8 @@ print("Loading data...")
 test_dataset = Dataset.from_generator(readfromfile_generator,
                                       gen_kwargs={'subset': 'attack', 'dir': data_path,
                                                   'pretrained_model': pretrained_model_victim, 'trim_text': True,
-                                                  'with_pairs': with_pairs})
+                                                  'with_pairs': with_pairs},
+                                                  keep_in_memory = True)
 if not with_pairs:
     dataset = test_dataset.map(function=dataset_mapping)
     dataset = dataset.remove_columns(["text"])
