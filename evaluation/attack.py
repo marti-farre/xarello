@@ -58,6 +58,8 @@ parser.add_argument('--defense_param', type=float, default=0.0,
                     help='Defense parameter (noise_std or dropout_prob)')
 parser.add_argument('--defense_seed', type=int, default=42,
                     help='Random seed for defense (for reproducibility)')
+parser.add_argument('--verbose', action='store_true',
+                    help='Print defense modifications as they happen')
 
 # Check if using legacy positional args or new named args
 if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
@@ -77,8 +79,10 @@ if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
         defense_type = args.defense
         defense_param = args.defense_param
         defense_seed = args.defense_seed
+        verbose = args.verbose
     else:
         defense_seed = 42
+        verbose = False
 else:
     # Named argument parsing
     args = parser.parse_args()
@@ -99,6 +103,7 @@ else:
     defense_type = args.defense
     defense_param = args.defense_param
     defense_seed = args.defense_seed
+    verbose = args.verbose
 
 # Build output filename including defense info
 defense_suffix = ''
@@ -145,9 +150,10 @@ elif victim_model_type == 'BiLSTM':
     base_victim = VictimBiLSTM(victim_model_path, task, victim_device)
 
 # Apply defense wrapper if specified
+defended_victim = None
 if defense_type != 'none':
     print(f"Applying {defense_type} defense (param={defense_param})...")
-    defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed)
+    defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed, verbose=verbose)
     victim = VictimCache(victim_model_path, defended_victim)
 else:
     victim = VictimCache(victim_model_path, base_victim)
@@ -205,6 +211,14 @@ with no_ssl_verify():
     end = time.time()
 attack_time = end - start
 attacker = None
+
+# Save defense modifications if any
+if defended_victim is not None and out_dir:
+    modifications = defended_victim.get_modifications()
+    if modifications:
+        mod_file = out_dir / f'modifications_{task}_{targeted}_{attack_model_type}_{victim_model_type}{defense_suffix}.tsv'
+        defended_victim.save_modifications(str(mod_file))
+        print(f"Saved {len(modifications)} defense modifications to {mod_file}")
 
 # Remove unused stuff
 victim.finalise()

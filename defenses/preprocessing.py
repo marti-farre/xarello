@@ -24,12 +24,15 @@ class DefenseWrapper(OpenAttack.Classifier, ABC):
     before delegating to the underlying victim model.
     """
 
-    def __init__(self, victim: OpenAttack.Classifier):
+    def __init__(self, victim: OpenAttack.Classifier, verbose: bool = False):
         """
         Args:
             victim: The underlying classifier to wrap
+            verbose: If True, print when text is modified
         """
         self.victim = victim
+        self.verbose = verbose
+        self.modifications = []  # Track all modifications: (original, defended)
 
     def get_pred(self, input_: List[str]) -> np.ndarray:
         """Get hard predictions after applying defense."""
@@ -53,10 +56,38 @@ class DefenseWrapper(OpenAttack.Classifier, ABC):
                 # Handle text pairs (FC/C19 tasks)
                 parts = text.split(SEPARATOR)
                 defended_parts = [self.defend_single(p) for p in parts]
-                result.append(SEPARATOR.join(defended_parts))
+                defended_text = SEPARATOR.join(defended_parts)
             else:
-                result.append(self.defend_single(text))
+                defended_text = self.defend_single(text)
+
+            # Track and log modifications
+            if text != defended_text:
+                self.modifications.append((text, defended_text))
+                if self.verbose:
+                    print(f"\n[DEFENSE] Text modified:")
+                    print(f"  Original: {text[:100]}{'...' if len(text) > 100 else ''}")
+                    print(f"  Defended: {defended_text[:100]}{'...' if len(defended_text) > 100 else ''}")
+
+            result.append(defended_text)
         return result
+
+    def get_modifications(self) -> List[tuple]:
+        """Return list of (original, defended) text pairs that were modified."""
+        return self.modifications
+
+    def clear_modifications(self):
+        """Clear the modifications log."""
+        self.modifications = []
+
+    def save_modifications(self, path: str):
+        """Save modifications to a TSV file."""
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("original\tdefended\n")
+            for orig, defended in self.modifications:
+                # Escape tabs and newlines for TSV format
+                orig_escaped = orig.replace('\t', '\\t').replace('\n', '\\n')
+                defended_escaped = defended.replace('\t', '\\t').replace('\n', '\\n')
+                f.write(f"{orig_escaped}\t{defended_escaped}\n")
 
     @abstractmethod
     def defend_single(self, text: str) -> str:
@@ -77,13 +108,14 @@ class SpellCheckDefense(DefenseWrapper):
     result in misspellings. This defense attempts to correct them.
     """
 
-    def __init__(self, victim: OpenAttack.Classifier, language: str = 'en'):
+    def __init__(self, victim: OpenAttack.Classifier, language: str = 'en', verbose: bool = False):
         """
         Args:
             victim: The underlying classifier to wrap
             language: Language for spell checking (default: 'en')
+            verbose: If True, print when text is modified
         """
-        super().__init__(victim)
+        super().__init__(victim, verbose)
         self.language = language
         self._spellchecker = None
 
@@ -156,15 +188,17 @@ class EmbeddingNoiseDefense(DefenseWrapper):
         self,
         victim: OpenAttack.Classifier,
         noise_std: float = 0.1,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        verbose: bool = False
     ):
         """
         Args:
             victim: The underlying classifier to wrap
             noise_std: Standard deviation of Gaussian noise (0.0 = no noise)
             seed: Random seed for reproducibility
+            verbose: If True, print when text is modified
         """
-        super().__init__(victim)
+        super().__init__(victim, verbose)
         self.noise_std = noise_std
         self.rng = random.Random(seed)
 
@@ -219,7 +253,8 @@ class TokenDropoutDefense(DefenseWrapper):
         victim: OpenAttack.Classifier,
         dropout_prob: float = 0.1,
         seed: Optional[int] = None,
-        min_tokens: int = 3
+        min_tokens: int = 3,
+        verbose: bool = False
     ):
         """
         Args:
@@ -227,8 +262,9 @@ class TokenDropoutDefense(DefenseWrapper):
             dropout_prob: Probability of dropping each token (0.0 - 1.0)
             seed: Random seed for reproducibility
             min_tokens: Minimum number of tokens to keep
+            verbose: If True, print when text is modified
         """
-        super().__init__(victim)
+        super().__init__(victim, verbose)
         self.dropout_prob = dropout_prob
         self.min_tokens = min_tokens
         self.rng = random.Random(seed)
@@ -266,6 +302,9 @@ class TokenDropoutDefense(DefenseWrapper):
 class IdentityDefense(DefenseWrapper):
     """No-op defense that passes input unchanged. Useful for baseline comparisons."""
 
+    def __init__(self, victim: OpenAttack.Classifier, verbose: bool = False):
+        super().__init__(victim, verbose)
+
     def defend_single(self, text: str) -> str:
         return text
 
@@ -274,7 +313,8 @@ def get_defense(
     defense_name: str,
     victim: OpenAttack.Classifier,
     param: float = 0.0,
-    seed: Optional[int] = None
+    seed: Optional[int] = None,
+    verbose: bool = False
 ) -> OpenAttack.Classifier:
     """
     Factory function to create defense wrappers.
@@ -284,6 +324,7 @@ def get_defense(
         victim: The victim classifier to wrap
         param: Defense-specific parameter (noise_std or dropout_prob)
         seed: Random seed for reproducibility
+        verbose: If True, print when text is modified
 
     Returns:
         Wrapped victim classifier with defense applied
@@ -293,13 +334,13 @@ def get_defense(
     if defense_name == 'none' or defense_name == '':
         return victim
     elif defense_name == 'spellcheck':
-        return SpellCheckDefense(victim)
+        return SpellCheckDefense(victim, verbose=verbose)
     elif defense_name == 'noise':
-        return EmbeddingNoiseDefense(victim, noise_std=param, seed=seed)
+        return EmbeddingNoiseDefense(victim, noise_std=param, seed=seed, verbose=verbose)
     elif defense_name == 'dropout':
-        return TokenDropoutDefense(victim, dropout_prob=param, seed=seed)
+        return TokenDropoutDefense(victim, dropout_prob=param, seed=seed, verbose=verbose)
     elif defense_name == 'identity':
-        return IdentityDefense(victim)
+        return IdentityDefense(victim, verbose=verbose)
     else:
         raise ValueError(f"Unknown defense: {defense_name}. "
                         f"Available: none, spellcheck, noise, dropout")
