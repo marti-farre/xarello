@@ -71,7 +71,7 @@ if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
     if len(sys.argv) >= 8 and not sys.argv[7].startswith('--'):
         out_dir = pathlib.Path(sys.argv[7])
     # Check for defense args after positional args
-    remaining_args = [a for a in sys.argv[7:] if a.startswith('--')]
+    remaining_args = sys.argv[8:] if len(sys.argv) >= 8 and not sys.argv[7].startswith('--') else sys.argv[7:]
     if remaining_args:
         args, _ = parser.parse_known_args(remaining_args)
         defense_type = args.defense
