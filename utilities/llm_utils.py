@@ -1,8 +1,16 @@
+import os
+import urllib.request
+import zipfile
 import numpy as np
 import torch
 from transformers import AutoModelForMaskedLM, AutoModel, AutoConfig
 import fasttext
 from huggingface_hub import hf_hub_download
+
+# Embedding type selection: 'glove' (~400MB, allows more training data) or 'fasttext' (~7GB, better quality)
+EMBEDDING_TYPE = 'glove'
+
+_fasttext_model_cache = None
 
 
 def prepare_for_llm(observations, tokeniser):
@@ -117,23 +125,76 @@ def get_candidate_embeddings_llm(orig_texts, orig_tokens, replacement_tokens, BE
 
 
 def load_fastText_vectors():
+    """Load FastText vectors (~7GB download, ~7GB in memory)"""
+    global _fasttext_model_cache
+    if _fasttext_model_cache is not None:
+        print("Using cached FastText model...")
+        return _fasttext_model_cache
     model_path = hf_hub_download(repo_id="facebook/fasttext-en-vectors", filename='model.bin')
     model = fasttext.load_model(model_path)
+    _fasttext_model_cache = model
     return model
 
 
+def load_glove_vectors(glove_path=None):
+    """Load GloVe 6B 300d vectors (~862MB download, ~400MB in memory)"""
+    if glove_path is None:
+        glove_dir = os.path.expanduser('~/.cache/glove')
+        glove_path = os.path.join(glove_dir, 'glove.6B.300d.txt')
+
+    if not os.path.exists(glove_path):
+        print("Downloading GloVe vectors (862MB)...")
+        os.makedirs(os.path.dirname(glove_path), exist_ok=True)
+        zip_path = os.path.join(os.path.dirname(glove_path), 'glove.6B.zip')
+
+        url = "https://nlp.stanford.edu/data/glove.6B.zip"
+        urllib.request.urlretrieve(url, zip_path)
+
+        print("Extracting GloVe vectors...")
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extract('glove.6B.300d.txt', os.path.dirname(glove_path))
+
+        os.remove(zip_path)
+        print("GloVe vectors ready.")
+
+    print("Loading GloVe vectors into memory...")
+    embeddings = {}
+    with open(glove_path, 'r', encoding='utf-8') as f:
+        for line in f:
+            values = line.split()
+            word = values[0]
+            vector = np.asarray(values[1:], dtype='float32')
+            embeddings[word] = vector
+
+    print(f"Loaded {len(embeddings)} word vectors.")
+    return embeddings
+
+
 def get_candidate_embeddings_static(replacement_tokens, tokeniser):
+    """Get embeddings for candidate replacement tokens using configured embedding type."""
     hidden_size = 300
-    embeddings = np.zeros(replacement_tokens.shape + (hidden_size,))
-    print("Reading static embedding dictionary...")
-    emb_model = load_fastText_vectors()
-    all_words = set(emb_model.words)
-    print("Obtaining candidate embeddings...")
-    for i in range(replacement_tokens.shape[0]):
-        for j in range(replacement_tokens.shape[1]):
-            strings = tokeniser.batch_decode(replacement_tokens[i][j])
-            for k, string in enumerate(strings):
-                normalised = string.replace('##', '')
-                if normalised in all_words:
-                    embeddings[i, j, k] = emb_model[normalised]
+    embeddings = np.zeros(replacement_tokens.shape + (hidden_size,), dtype=np.float16)
+
+    if EMBEDDING_TYPE == 'fasttext':
+        print("Reading static embedding dictionary (FastText)...")
+        model = load_fastText_vectors()
+        print("Obtaining candidate embeddings...")
+        for i in range(replacement_tokens.shape[0]):
+            for j in range(replacement_tokens.shape[1]):
+                strings = tokeniser.batch_decode(replacement_tokens[i][j])
+                for k, string in enumerate(strings):
+                    normalised = string.replace('##', '')
+                    embeddings[i, j, k] = model.get_word_vector(normalised)
+    else:  # glove
+        print("Reading static embedding dictionary (GloVe)...")
+        emb_dict = load_glove_vectors()
+        print("Obtaining candidate embeddings...")
+        for i in range(replacement_tokens.shape[0]):
+            for j in range(replacement_tokens.shape[1]):
+                strings = tokeniser.batch_decode(replacement_tokens[i][j])
+                for k, string in enumerate(strings):
+                    normalised = string.replace('##', '').lower()  # GloVe is lowercase
+                    if normalised in emb_dict:
+                        embeddings[i, j, k] = emb_dict[normalised]
+
     return embeddings

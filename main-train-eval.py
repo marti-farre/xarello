@@ -22,8 +22,14 @@ outpath_string = sys.argv[3]
 pretrained_model = "bert-base-cased"
 tokeniser = AutoTokenizer.from_pretrained(pretrained_model)
 
-attacker_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-victim_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+def get_device():
+    if torch.cuda.is_available():
+        return torch.device('cuda')
+    elif torch.backends.mps.is_available():
+        return torch.device('mps')
+    return torch.device('cpu')
+attacker_device = get_device()
+victim_device = get_device()
 
 #task = 'PR2'
 #victim_model = 'BiLSTM'
@@ -42,8 +48,8 @@ elif victim_model == 'GEMMA7B':
     pretrained_model_here = PRETRAINED_GEMMA_7B
     victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
 
-TRAIN_SIZE = 3200
-EVAL_SIZE = 400
+TRAIN_SIZE = 800
+EVAL_SIZE = 200
 
 if task == 'FC':
     all_texts = [
@@ -74,8 +80,8 @@ save_all_models = True
 save_path=pathlib.Path(outpath_string) / ('xarello-qmodel.pth')
 #agent.load_from_path(save_path)
 
-STARTING_EPOCH = 12
-STARTING_EPISODES = 192000
+STARTING_EPOCH = 0
+STARTING_EPISODES = 0
 if STARTING_EPOCH>0:
     # load model
     agent = Qlearner(train_env, pretrained_model, warmup_episodes, attacker_device, longterm_memory=True,
@@ -160,7 +166,7 @@ while True:
         # Make an action
         action = agent.choose_action(eval_observation)
         # Observe the result
-        train_observation, reward, terminated, truncated, _ = eval_env.step(action)
+        eval_observation, reward, terminated, truncated, _ = eval_env.step(action)
         print(eval_env.render())
         rewards_here.append(reward)
         # Finalise

@@ -61,9 +61,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:100"
 if torch.cuda.is_available():
     victim_device = torch.device("cuda")
     attacker_device = torch.device("cuda")
-# elif torch.backends.mps.is_available():
-#    victim_device = torch.device('mps') if victim_model!= 'BiLSTM' else torch.device('cpu')
-#    attacker_device = torch.device('mps') if attack!= 'BERTattack' else torch.device('cpu')
+elif torch.backends.mps.is_available():
+   victim_device = torch.device('mps')
+   attacker_device = torch.device('mps')
 else:
     victim_device = torch.device("cpu")
     attacker_device = torch.device('cpu')
@@ -83,6 +83,7 @@ elif victim_model_type == 'GEMMA7B':
     victim = VictimCache(victim_model_path,
                          VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device))
 elif victim_model_type == 'BiLSTM':
+    pretrained_model_victim = 'bert-base-uncased'  # BiLSTM uses BERT tokenizer
     victim = VictimCache(victim_model_path, VictimBiLSTM(victim_model_path, task, victim_device))
 
 # Load data
@@ -112,7 +113,7 @@ attack_texts = [inst["x"] for inst in dataset]
 print("Setting up the attacker...")
 protected_tokens = ['~'] if task == 'FC' else []
 attack_model_path = pathlib.Path.home() / 'data' / 'xarello' / 'models' / attack_model_variant / (
-        task + '-' + victim_model_type) / 'xarello-qmodel.pth'
+        task + '-' + victim_model_type + '-2') / 'xarello-qmodel.pth'
 pretrained_model_attacker = "bert-base-cased"
 attack_env = EnvAE(pretrained_model_attacker, attack_texts, victim, attacker_device, static_embedding=True,
                    protected_tokens=protected_tokens)
