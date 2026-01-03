@@ -154,7 +154,8 @@ defended_victim = None
 if defense_type != 'none':
     print(f"Applying {defense_type} defense (param={defense_param})...")
     defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed, verbose=verbose)
-    victim = VictimCache(victim_model_path, defended_victim)
+    # Skip caching when defense is active - defense transforms input so cache would be invalid
+    victim = defended_victim
 else:
     victim = VictimCache(victim_model_path, base_victim)
 
@@ -221,7 +222,8 @@ if defended_victim is not None and out_dir:
         print(f"Saved {len(modifications)} defense modifications to {mod_file}")
 
 # Remove unused stuff
-victim.finalise()
+if hasattr(victim, 'finalise'):
+    victim.finalise()
 del victim
 gc.collect()
 torch.cuda.empty_cache()
