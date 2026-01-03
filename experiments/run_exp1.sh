@@ -59,10 +59,7 @@ echo ""
 echo "Starting experiments at $(date)"
 echo ""
 
-# 1. Baseline (no defense)
-run_experiment "none" 0.0 "Baseline (no defense)"
-
-# 2. Spell check defense
+# 1. Spell check defense
 run_experiment "spellcheck" 0.0 "Spell check defense"
 
 # 3. Token dropout variants
