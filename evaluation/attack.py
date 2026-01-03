@@ -113,7 +113,7 @@ attack_texts = [inst["x"] for inst in dataset]
 print("Setting up the attacker...")
 protected_tokens = ['~'] if task == 'FC' else []
 attack_model_path = pathlib.Path.home() / 'data' / 'xarello' / 'models' / attack_model_variant / (
-        task + '-' + victim_model_type) / 'xarello-qmodel.pth'
+        task + '-' + victim_model_type + '-2') / 'xarello-qmodel.pth'
 pretrained_model_attacker = "bert-base-cased"
 attack_env = EnvAE(pretrained_model_attacker, attack_texts, victim, attacker_device, static_embedding=True,
                    protected_tokens=protected_tokens)
