@@ -61,9 +61,9 @@ os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:100"
 if torch.cuda.is_available():
     victim_device = torch.device("cuda")
     attacker_device = torch.device("cuda")
-# elif torch.backends.mps.is_available():
-#    victim_device = torch.device('mps') if victim_model!= 'BiLSTM' else torch.device('cpu')
-#    attacker_device = torch.device('mps') if attack!= 'BERTattack' else torch.device('cpu')
+elif torch.backends.mps.is_available():
+   victim_device = torch.device('mps')
+   attacker_device = torch.device('mps')
 else:
     victim_device = torch.device("cpu")
     attacker_device = torch.device('cpu')
