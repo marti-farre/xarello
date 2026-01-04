@@ -124,13 +124,23 @@ class SpellCheckDefense(DefenseWrapper):
         """Lazy load spellchecker to avoid import overhead."""
         if self._spellchecker is None:
             try:
-                from spellchecker import SpellChecker
-                self._spellchecker = SpellChecker(language=self.language)
+                from symspellpy import SymSpell
+                import importlib.resources
             except ImportError:
                 raise ImportError(
-                    "SpellCheckDefense requires pyspellchecker. "
-                    "Install with: pip install pyspellchecker"
+                    "SpellCheckDefense requires symspellpy. "
+                    "Install with: pip install symspellpy"
                 )
+
+            self._spellchecker = SymSpell(
+                max_dictionary_edit_distance=2,
+                prefix_length=7
+            )
+
+            # Load built-in English dictionary
+            dictionary_path = importlib.resources.files("symspellpy") / "frequency_dictionary_en_82_765.txt"
+            if not self._spellchecker.load_dictionary(dictionary_path, term_index=0, count_index=1):
+                raise RuntimeError("Failed to load symspellpy English dictionary")
         return self._spellchecker
 
     def defend_single(self, text: str) -> str:
@@ -156,7 +166,9 @@ class SpellCheckDefense(DefenseWrapper):
 
             if core:
                 # Check if word needs correction
-                correction = self.spellchecker.correction(core.lower())
+                from symspellpy import Verbosity
+                suggestions = self.spellchecker.lookup(core.lower(), Verbosity.TOP, max_edit_distance=2)
+                correction = suggestions[0].term if suggestions else None
                 if correction and correction != core.lower():
                     # Preserve original case pattern
                     if core.isupper():

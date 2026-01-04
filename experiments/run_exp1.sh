@@ -38,7 +38,7 @@ run_experiment() {
     echo "Defense: $defense, Param: $param"
     echo "----------------------------------------"
 
-    python -m evaluation.attack \
+    python -u -m evaluation.attack \
         "$TASK" "$TARGETED" "$ATTACK" "$VICTIM" \
         "$DATA_PATH" "$MODEL_PATH" "$OUT_DIR" \
         --defense "$defense" \
@@ -53,7 +53,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/.."
 
 # Add BODEGA to Python path
-export PYTHONPATH="$HOME/BODEGA:$PYTHONPATH"
+BODEGA_PATH="${BODEGA_PATH:-$HOME/Desktop/Repos/master/BODEGA}"
+export PYTHONPATH="$BODEGA_PATH:$PYTHONPATH"
 
 echo ""
 echo "Starting experiments at $(date)"
