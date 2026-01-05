@@ -1,10 +1,3 @@
-"""
-Input preprocessing defenses for adversarial robustness evaluation.
-
-These defenses modify input text before passing to the victim classifier,
-aiming to neutralize character-level and word-level perturbations.
-"""
-
 import random
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional
@@ -17,39 +10,19 @@ SEPARATOR = ' ~ '
 
 
 class DefenseWrapper(OpenAttack.Classifier, ABC):
-    """
-    Base class for defense wrappers that preprocess input before classification.
-
-    Wraps any OpenAttack.Classifier and applies a defense strategy to inputs
-    before delegating to the underlying victim model.
-    """
-
     def __init__(self, victim: OpenAttack.Classifier, verbose: bool = False):
-        """
-        Args:
-            victim: The underlying classifier to wrap
-            verbose: If True, print when text is modified
-        """
         self.victim = victim
         self.verbose = verbose
-        self.modifications = []  # Track all modifications: (original, defended)
+        self.modifications = []
 
     def get_pred(self, input_: List[str]) -> np.ndarray:
-        """Get hard predictions after applying defense."""
         return self.get_prob(input_).argmax(axis=1)
 
     def get_prob(self, input_: List[str]) -> np.ndarray:
-        """Get probability distributions after applying defense."""
         defended_input = self.apply_defense(input_)
         return self.victim.get_prob(defended_input)
 
     def apply_defense(self, input_: List[str]) -> List[str]:
-        """
-        Apply defense to a batch of inputs.
-
-        Handles text pairs (separated by SEPARATOR) by applying defense
-        to each part independently.
-        """
         result = []
         for text in input_:
             if SEPARATOR in text:
@@ -72,15 +45,12 @@ class DefenseWrapper(OpenAttack.Classifier, ABC):
         return result
 
     def get_modifications(self) -> List[tuple]:
-        """Return list of (original, defended) text pairs that were modified."""
         return self.modifications
 
     def clear_modifications(self):
-        """Clear the modifications log."""
         self.modifications = []
 
     def save_modifications(self, path: str):
-        """Save modifications to a TSV file."""
         with open(path, 'w', encoding='utf-8') as f:
             f.write("original\tdefended\n")
             for orig, defended in self.modifications:
@@ -91,11 +61,9 @@ class DefenseWrapper(OpenAttack.Classifier, ABC):
 
     @abstractmethod
     def defend_single(self, text: str) -> str:
-        """Apply defense to a single text. Must be implemented by subclasses."""
         pass
 
     def finalise(self):
-        """Delegate finalise call to victim (for caching support)."""
         if hasattr(self.victim, 'finalise'):
             self.victim.finalise()
 
@@ -109,19 +77,12 @@ class SpellCheckDefense(DefenseWrapper):
     """
 
     def __init__(self, victim: OpenAttack.Classifier, language: str = 'en', verbose: bool = False):
-        """
-        Args:
-            victim: The underlying classifier to wrap
-            language: Language for spell checking (default: 'en')
-            verbose: If True, print when text is modified
-        """
         super().__init__(victim, verbose)
         self.language = language
         self._spellchecker = None
 
     @property
     def spellchecker(self):
-        """Lazy load spellchecker to avoid import overhead."""
         if self._spellchecker is None:
             try:
                 from symspellpy import SymSpell
@@ -203,13 +164,6 @@ class EmbeddingNoiseDefense(DefenseWrapper):
         seed: Optional[int] = None,
         verbose: bool = False
     ):
-        """
-        Args:
-            victim: The underlying classifier to wrap
-            noise_std: Standard deviation of Gaussian noise (0.0 = no noise)
-            seed: Random seed for reproducibility
-            verbose: If True, print when text is modified
-        """
         super().__init__(victim, verbose)
         self.noise_std = noise_std
         self.rng = random.Random(seed)
@@ -268,14 +222,6 @@ class TokenDropoutDefense(DefenseWrapper):
         min_tokens: int = 3,
         verbose: bool = False
     ):
-        """
-        Args:
-            victim: The underlying classifier to wrap
-            dropout_prob: Probability of dropping each token (0.0 - 1.0)
-            seed: Random seed for reproducibility
-            min_tokens: Minimum number of tokens to keep
-            verbose: If True, print when text is modified
-        """
         super().__init__(victim, verbose)
         self.dropout_prob = dropout_prob
         self.min_tokens = min_tokens
@@ -328,19 +274,6 @@ def get_defense(
     seed: Optional[int] = None,
     verbose: bool = False
 ) -> OpenAttack.Classifier:
-    """
-    Factory function to create defense wrappers.
-
-    Args:
-        defense_name: Name of defense ('none', 'spellcheck', 'noise', 'dropout')
-        victim: The victim classifier to wrap
-        param: Defense-specific parameter (noise_std or dropout_prob)
-        seed: Random seed for reproducibility
-        verbose: If True, print when text is modified
-
-    Returns:
-        Wrapped victim classifier with defense applied
-    """
     defense_name = defense_name.lower()
 
     if defense_name == 'none' or defense_name == '':
