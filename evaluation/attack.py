@@ -6,6 +6,7 @@ import sys
 import time
 import random
 import numpy as np
+from collections import Counter
 
 import OpenAttack
 import torch
@@ -183,6 +184,13 @@ print("Subset size: " + str(len(dataset)))
 # dataset = dataset [-10:]
 attack_texts = [inst["x"] for inst in dataset]
 
+# Track original labels and predictions for confusion matrix
+y_true = [inst["y"] for inst in dataset]
+print("Collecting original predictions for confusion matrix...")
+y_pred_before = [victim.get_pred([inst["x"]])[0] for inst in dataset]
+class_distribution = Counter(y_true)
+print(f"Class distribution: {dict(class_distribution)}")
+
 # Prepare attack
 print("Setting up the attacker...")
 protected_tokens = ['~'] if task == 'FC' else []
@@ -262,6 +270,44 @@ print("Total attack time: " + str(attack_time))
 print("Time per example: " + str((attack_time) / len(dataset)))
 print("Total evaluation time: " + str(evaluate_time))
 
+# Compute and print confusion matrix
+print("")
+print("=" * 50)
+print("CONFUSION MATRIX (Before Attack)")
+print("=" * 50)
+# Original model accuracy by class
+correct_by_class = {0: 0, 1: 0}
+total_by_class = {0: 0, 1: 0}
+for yt, yp in zip(y_true, y_pred_before):
+    total_by_class[yt] += 1
+    if yt == yp:
+        correct_by_class[yt] += 1
+
+print(f"Class 0: {correct_by_class[0]}/{total_by_class[0]} correct ({100*correct_by_class[0]/max(1,total_by_class[0]):.1f}%)")
+print(f"Class 1: {correct_by_class[1]}/{total_by_class[1]} correct ({100*correct_by_class[1]/max(1,total_by_class[1]):.1f}%)")
+print(f"Overall: {sum(correct_by_class.values())}/{sum(total_by_class.values())} correct ({100*sum(correct_by_class.values())/max(1,sum(total_by_class.values())):.1f}%)")
+
+# Try to read raw results for per-sample attack success
+if raw_path and raw_path.exists():
+    print("")
+    print("=" * 50)
+    print("ATTACK SUCCESS BY CLASS")
+    print("=" * 50)
+    try:
+        import pandas as pd
+        raw_df = pd.read_csv(raw_path, sep='\t')
+        if 'success' in raw_df.columns:
+            # Merge with original labels
+            raw_df['y_true'] = y_true[:len(raw_df)]
+            success_by_class = raw_df.groupby('y_true')['success'].agg(['sum', 'count'])
+            for cls in [0, 1]:
+                if cls in success_by_class.index:
+                    succ = int(success_by_class.loc[cls, 'sum'])
+                    total = int(success_by_class.loc[cls, 'count'])
+                    print(f"Class {cls}: {succ}/{total} attacks succeeded ({100*succ/max(1,total):.1f}%)")
+    except Exception as e:
+        print(f"Could not parse raw results: {e}")
+
 if out_dir:
     with open(out_dir / FILE_NAME, 'w') as f:
         f.write("# Experiment Configuration\n")
@@ -282,3 +328,9 @@ if out_dir:
         f.write("Total attack time: " + str(attack_time) + '\n')
         f.write("Time per example: " + str((attack_time) / len(dataset)) + '\n')
         f.write("Total evaluation time: " + str(evaluate_time) + '\n')
+        
+        # Write confusion matrix
+        f.write("\n# Confusion Matrix (Before Attack)\n")
+        f.write(f"Class 0: {correct_by_class[0]}/{total_by_class[0]} correct ({100*correct_by_class[0]/max(1,total_by_class[0]):.1f}%)\n")
+        f.write(f"Class 1: {correct_by_class[1]}/{total_by_class[1]} correct ({100*correct_by_class[1]/max(1,total_by_class[1]):.1f}%)\n")
+        f.write(f"Overall: {sum(correct_by_class.values())}/{sum(total_by_class.values())} correct ({100*sum(correct_by_class.values())/max(1,sum(total_by_class.values())):.1f}%)\n")
