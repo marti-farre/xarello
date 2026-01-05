@@ -10,6 +10,7 @@ import pathlib, sys
 from agent.q_learning import Qlearner
 from env.EnvAE import EnvAE, copy_observation
 from ae_victims.openattack import OpenAttackVictimWrapper
+from defenses.training_noise import get_training_noise_wrapper
 
 random.seed(10)
 torch.manual_seed(10)
@@ -18,6 +19,12 @@ np.random.seed(0)
 task = sys.argv[1]
 victim_model = sys.argv[2]
 outpath_string = sys.argv[3]
+
+# Training noise arguments (for Experiment 2: Decision Noise)
+# Usage: python main-train-eval.py TASK VICTIM OUTPATH [NOISE_TYPE] [NOISE_PARAM] [NOISE_SEED]
+training_noise = sys.argv[4] if len(sys.argv) > 4 else 'none'
+noise_param = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
+noise_seed = int(sys.argv[6]) if len(sys.argv) > 6 else 42
 
 pretrained_model = "bert-base-cased"
 tokeniser = AutoTokenizer.from_pretrained(pretrained_model)
@@ -48,6 +55,11 @@ elif victim_model == 'GEMMA7B':
     pretrained_model_here = PRETRAINED_GEMMA_7B
     victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
 
+# Apply training noise wrapper (Experiment 2: Decision Noise)
+if training_noise != 'none':
+    print(f"Applying training noise: {training_noise} (param={noise_param}, seed={noise_seed})")
+    victim = get_training_noise_wrapper(training_noise, victim, noise_param, noise_seed)
+
 TRAIN_SIZE = 1600
 EVAL_SIZE = 400
 
@@ -61,6 +73,7 @@ else:
 eval_texts = all_texts[:EVAL_SIZE]
 train_texts = all_texts[EVAL_SIZE:(EVAL_SIZE + TRAIN_SIZE)]
 print("Using train set size: "+str(len(train_texts))+" and eval set size: "+str(len(eval_texts)))
+print(f"Training noise: {training_noise} (param={noise_param}, seed={noise_seed})")
 
 TEXTS_IN_ROUND = len(train_texts)
 MAX_EPOCHS = 20
@@ -209,6 +222,23 @@ processing_time = end - start
 
 print("Final mean reward value: " + str(np.mean(train_rewards)))
 print("Processing time: " + str(processing_time))
+
+# Save training configuration for reproducibility
+config_path = plot_path / "training_config.txt"
+with open(config_path, 'w') as f:
+    f.write(f"task: {task}\n")
+    f.write(f"victim_model: {victim_model}\n")
+    f.write(f"training_noise: {training_noise}\n")
+    f.write(f"noise_param: {noise_param}\n")
+    f.write(f"noise_seed: {noise_seed}\n")
+    f.write(f"train_size: {TRAIN_SIZE}\n")
+    f.write(f"eval_size: {EVAL_SIZE}\n")
+    f.write(f"max_epochs: {MAX_EPOCHS}\n")
+    f.write(f"warmup_fraction: {warmup_fraction}\n")
+    f.write(f"final_train_success: {np.mean(train_successes) if train_successes else 'N/A'}\n")
+    f.write(f"final_eval_success: {np.mean(eval_successes) if eval_successes else 'N/A'}\n")
+    f.write(f"processing_time: {processing_time}\n")
+print(f"Saved training config to {config_path}")
 
 # outfile.close()
 

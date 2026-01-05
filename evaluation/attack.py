@@ -61,6 +61,8 @@ parser.add_argument('--defense_seed', type=int, default=42,
                     help='Random seed for defense (for reproducibility)')
 parser.add_argument('--verbose', action='store_true',
                     help='Print defense modifications as they happen')
+parser.add_argument('--qmodel_path', type=str, default=None,
+                    help='Path to XARELLO Q-model (overrides default path)')
 
 # Check if using legacy positional args or new named args
 if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
@@ -81,9 +83,11 @@ if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
         defense_param = args.defense_param
         defense_seed = args.defense_seed
         verbose = args.verbose
+        qmodel_path = args.qmodel_path
     else:
         defense_seed = 42
         verbose = False
+        qmodel_path = None
 else:
     # Named argument parsing
     args = parser.parse_args()
@@ -105,6 +109,7 @@ else:
     defense_param = args.defense_param
     defense_seed = args.defense_seed
     verbose = args.verbose
+    qmodel_path = args.qmodel_path
 
 # Build output filename including defense info
 defense_suffix = ''
@@ -194,8 +199,14 @@ print(f"Class distribution: {dict(class_distribution)}")
 # Prepare attack
 print("Setting up the attacker...")
 protected_tokens = ['~'] if task == 'FC' else []
-attack_model_path = pathlib.Path.home() / 'data' / 'xarello' / 'models' / attack_model_variant / (
-        task + '-' + victim_model_type + '-2') / 'xarello-qmodel.pth'
+
+# Use custom qmodel_path if provided, otherwise use default path
+if qmodel_path:
+    attack_model_path = pathlib.Path(qmodel_path)
+    print(f"Using custom Q-model path: {attack_model_path}")
+else:
+    attack_model_path = pathlib.Path.home() / 'data' / 'xarello' / 'models' / attack_model_variant / (
+            task + '-' + victim_model_type + '-2') / 'xarello-qmodel.pth'
 pretrained_model_attacker = "bert-base-cased"
 attack_env = EnvAE(pretrained_model_attacker, attack_texts, victim, attacker_device, static_embedding=True,
                    protected_tokens=protected_tokens)
