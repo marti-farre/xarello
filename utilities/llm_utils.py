@@ -8,7 +8,7 @@ import fasttext
 from huggingface_hub import hf_hub_download
 
 # Embedding type selection: 'glove' (~400MB, allows more training data) or 'fasttext' (~7GB, better quality)
-EMBEDDING_TYPE = 'glove'
+EMBEDDING_TYPE = 'fasttext' #'glove'
 
 _fasttext_model_cache = None
 
