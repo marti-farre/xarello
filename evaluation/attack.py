@@ -126,7 +126,35 @@ if out_dir and (out_dir / FILE_NAME).exists():
 # Prepare task data
 with_pairs = (task == 'FC' or task == 'C19')
 
-# Choose device
+# Determine pretrained tokenizer name (depends only on victim type, not on weights)
+if victim_model_type == 'BERT':
+    pretrained_model_victim = PRETRAINED_BERT
+elif victim_model_type == 'GEMMA':
+    pretrained_model_victim = PRETRAINED_GEMMA_2B
+elif victim_model_type == 'GEMMA7B':
+    pretrained_model_victim = PRETRAINED_GEMMA_7B
+elif victim_model_type == 'BiLSTM':
+    pretrained_model_victim = 'bert-base-uncased'
+
+# Load data BEFORE initialising MPS/CUDA device.
+# Dataset.from_generator forks a subprocess internally; forking after MPS is
+# initialised causes a mutex-lock crash on macOS (Abort trap 6).
+print("Loading data...")
+test_dataset = Dataset.from_generator(readfromfile_generator,
+                                      gen_kwargs={'subset': 'attack', 'dir': data_path,
+                                                  'pretrained_model': pretrained_model_victim, 'trim_text': True,
+                                                  'with_pairs': with_pairs},
+                                                  keep_in_memory = True)
+if not with_pairs:
+    dataset = test_dataset.map(function=dataset_mapping)
+    dataset = dataset.remove_columns(["text"])
+else:
+    dataset = test_dataset.map(function=dataset_mapping_pairs)
+    dataset = dataset.remove_columns(["text1", "text2"])
+
+dataset = dataset.remove_columns(["fake"])
+
+# Choose device (after dataset is loaded to avoid fork-after-MPS crash on macOS)
 print("Setting up the device...")
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:100"
 
@@ -143,16 +171,12 @@ else:
 # Prepare victim
 print("Loading up victim model...")
 if victim_model_type == 'BERT':
-    pretrained_model_victim = PRETRAINED_BERT
     base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, False, victim_device)
 elif victim_model_type == 'GEMMA':
-    pretrained_model_victim = PRETRAINED_GEMMA_2B
     base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device)
 elif victim_model_type == 'GEMMA7B':
-    pretrained_model_victim = PRETRAINED_GEMMA_7B
     base_victim = VictimTransformer(victim_model_path, task, pretrained_model_victim, True, victim_device)
 elif victim_model_type == 'BiLSTM':
-    pretrained_model_victim = 'bert-base-uncased'  # BiLSTM uses BERT tokenizer
     base_victim = VictimBiLSTM(victim_model_path, task, victim_device)
 
 # Apply defense wrapper if specified
@@ -164,22 +188,6 @@ if defense_type != 'none':
     victim = defended_victim
 else:
     victim = VictimCache(victim_model_path, base_victim)
-
-# Load data
-print("Loading data...")
-test_dataset = Dataset.from_generator(readfromfile_generator,
-                                      gen_kwargs={'subset': 'attack', 'dir': data_path,
-                                                  'pretrained_model': pretrained_model_victim, 'trim_text': True,
-                                                  'with_pairs': with_pairs},
-                                                  keep_in_memory = True)
-if not with_pairs:
-    dataset = test_dataset.map(function=dataset_mapping)
-    dataset = dataset.remove_columns(["text"])
-else:
-    dataset = test_dataset.map(function=dataset_mapping_pairs)
-    dataset = dataset.remove_columns(["text1", "text2"])
-
-dataset = dataset.remove_columns(["fake"])
 # dataset = dataset.select(range(10))
 
 # Filter data
