@@ -51,26 +51,29 @@ model_path = pathlib.Path.home() / 'data' / 'BODEGA' / task / (victim_model + '-
 plot_path = pathlib.Path(outpath_string) #pathlib.Path.home() / 'data' / 'xarello' / 'out'
 
 if victim_model == 'BiLSTM':
-    victim = OpenAttackVictimWrapper(VictimBiLSTM(model_path, task, victim_device), tokeniser)
+    raw_victim = VictimBiLSTM(model_path, task, victim_device)
 elif victim_model == 'BERT':
     pretrained_model_here = PRETRAINED_BERT
-    victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, False, victim_device), tokeniser)
+    raw_victim = VictimTransformer(model_path, task, pretrained_model_here, False, victim_device)
 elif victim_model == 'GEMMA':
     pretrained_model_here = PRETRAINED_GEMMA_2B
-    victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
+    raw_victim = VictimTransformer(model_path, task, pretrained_model_here, True, victim_device)
 elif victim_model == 'GEMMA7B':
     pretrained_model_here = PRETRAINED_GEMMA_7B
-    victim = OpenAttackVictimWrapper(VictimTransformer(model_path, task, pretrained_model_here, True, victim_device), tokeniser)
+    raw_victim = VictimTransformer(model_path, task, pretrained_model_here, True, victim_device)
+
+# Apply preprocessing defense BEFORE OpenAttackVictimWrapper (Experiment 5: Adaptive Attacker — 5.2 retraining)
+# Must wrap the raw BODEGA victim (get_prob/get_pred interface) before XARELLO's pred() wrapper.
+if defense_name != 'none':
+    print(f"Applying preprocessing defense: {defense_name} (param={defense_param}, seed={defense_seed})")
+    raw_victim = get_defense(defense_name, raw_victim, param=defense_param, seed=defense_seed)
+
+victim = OpenAttackVictimWrapper(raw_victim, tokeniser)
 
 # Apply training noise wrapper (Experiment 2: Decision Noise)
 if training_noise != 'none':
     print(f"Applying training noise: {training_noise} (param={noise_param}, seed={noise_seed})")
     victim = get_training_noise_wrapper(training_noise, victim, noise_param, noise_seed)
-
-# Apply preprocessing defense wrapper (Experiment 5: Adaptive Attacker — 5.2 retraining)
-if defense_name != 'none':
-    print(f"Applying preprocessing defense: {defense_name} (param={defense_param}, seed={defense_seed})")
-    victim = get_defense(defense_name, victim, param=defense_param, seed=defense_seed)
 
 TRAIN_SIZE = 1600
 EVAL_SIZE = 400
