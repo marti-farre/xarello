@@ -230,7 +230,8 @@ print("Evaluating the attack...")
 RAW_FILE_NAME = 'raw_' + task + '_' + str(targeted) + '_' + 'XARELLO' + '_' + victim_model_type + '.tsv'
 raw_path = out_dir / RAW_FILE_NAME if out_dir else None
 with no_ssl_verify():
-    scorer = BODEGAScore(victim_device, task, align_sentences=True, semantic_scorer="BLEURT", raw_path=raw_path)
+    # Use BERTscore instead of BLEURT (BLEURT causes mutex crash on macOS)
+    scorer = BODEGAScore(victim_device, task, align_sentences=True, semantic_scorer="BERTscore", raw_path=raw_path)
 with no_ssl_verify():
     attack_eval = OpenAttack.AttackEval(attacker, victim, language='english', metrics=[
         scorer  # , OpenAttack.metric.EditDistance()
