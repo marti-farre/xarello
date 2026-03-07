@@ -267,6 +267,131 @@ class IdentityDefense(DefenseWrapper):
         return text
 
 
+class MajorityVoteDefense(DefenseWrapper):
+    """
+    Defense that creates perturbed copies of input and uses majority voting.
+
+    For each input text:
+    1. Create N perturbed copies using random character-level perturbations
+    2. Classify each copy with the victim model
+    3. Return the majority vote as the predicted class
+
+    get_prob() returns NOISY vote-fraction probabilities (stochastic oracle).
+    This confuses gradient-based word-level attacks that rely on consistent
+    probability signals to find effective substitutions.
+
+    Ported from BODEGA defenses/preprocessing.py (experiment-3/combine-voting-check).
+    """
+
+    def __init__(
+        self,
+        victim: OpenAttack.Classifier,
+        num_copies: int = 7,
+        perturbation_prob: float = 0.1,
+        aggregation: str = 'hard',
+        seed: Optional[int] = None,
+        verbose: bool = False
+    ):
+        super().__init__(victim, verbose)
+        self.num_copies = num_copies
+        self.perturbation_prob = perturbation_prob
+        self.aggregation = aggregation
+        self.rng = random.Random(seed)
+
+    def get_prob(self, input_: List[str]) -> np.ndarray:
+        """
+        Return vote-fraction probabilities from N perturbed copies (noisy oracle).
+
+        The stochastic oracle is intentional: each call returns different probabilities
+        because each call re-runs N fresh random perturbations. This confuses gradient-based
+        word-level attacks. OpenAttack "Check attacker result failed" errors are expected
+        and harmless — they indicate samples where the stochastic oracle blocked the attack.
+        """
+        all_probs = []
+        for _ in range(self.num_copies):
+            perturbed_input = self.apply_defense(input_)
+            probs = self.victim.get_prob(perturbed_input)
+            all_probs.append(probs)
+
+        all_probs = np.stack(all_probs, axis=0)  # (num_copies, batch_size, num_classes)
+
+        if self.aggregation == 'hard':
+            predictions = all_probs.argmax(axis=2)  # (num_copies, batch_size)
+            batch_size = predictions.shape[1]
+            num_classes = all_probs.shape[2]
+            result = np.zeros((batch_size, num_classes))
+            for sample_idx in range(batch_size):
+                votes = predictions[:, sample_idx]
+                for class_idx in range(num_classes):
+                    result[sample_idx, class_idx] = np.sum(votes == class_idx) / self.num_copies
+            return result
+        else:  # soft voting
+            return np.mean(all_probs, axis=0)
+
+    def defend_single(self, text: str) -> str:
+        """Apply random character-level perturbation (delete/swap/insert)."""
+        if self.perturbation_prob == 0.0:
+            return text
+
+        result = []
+        i = 0
+        while i < len(text):
+            char = text[i]
+            if char.isspace():
+                result.append(char)
+                i += 1
+                continue
+            if self.rng.random() < self.perturbation_prob:
+                perturbation = self.rng.choice(['delete', 'swap', 'insert'])
+                if perturbation == 'delete':
+                    i += 1
+                    continue
+                elif perturbation == 'swap' and i < len(text) - 1 and not text[i + 1].isspace():
+                    result.append(text[i + 1])
+                    result.append(char)
+                    i += 2
+                    continue
+                elif perturbation == 'insert':
+                    random_char = chr(self.rng.randint(ord('a'), ord('z')))
+                    result.append(random_char)
+                    result.append(char)
+                    i += 1
+                    continue
+            result.append(char)
+            i += 1
+
+        result_str = ''.join(result)
+        return result_str if result_str.strip() else text
+
+
+class SpellCheckMVDefense(MajorityVoteDefense):
+    """
+    Combined defense: SpellCheck first, then MajorityVote.
+
+    Pipeline: adversarial input → SpellCheck → N noisy MV copies → victim × N → majority vote
+
+    - SpellCheck handles character-level attacks (XARELLO char swaps, inserts, deletes)
+    - MajorityVote handles word-level attacks by confusing the RL agent's reward signal
+
+    Ported from BODEGA defenses/preprocessing.py (experiment-3/combine-voting-check).
+    """
+
+    def __init__(
+        self,
+        victim: OpenAttack.Classifier,
+        num_copies: int = 7,
+        seed: Optional[int] = None,
+        verbose: bool = False
+    ):
+        super().__init__(victim, num_copies=num_copies, seed=seed, verbose=verbose)
+        self._spellcheck = SpellCheckDefense(victim, verbose=verbose)
+
+    def get_prob(self, input_: List[str]) -> np.ndarray:
+        """SpellCheck input, then return noisy MV vote-fraction probabilities."""
+        spellchecked = self._spellcheck.apply_defense(input_)
+        return super().get_prob(spellchecked)
+
+
 def get_defense(
     defense_name: str,
     victim: OpenAttack.Classifier,
@@ -286,6 +411,13 @@ def get_defense(
         return TokenDropoutDefense(victim, dropout_prob=param, seed=seed, verbose=verbose)
     elif defense_name == 'identity':
         return IdentityDefense(victim, verbose=verbose)
+    elif defense_name == 'majority_vote' or defense_name == 'vote':
+        num_copies = int(param) if param > 0 else 7
+        return MajorityVoteDefense(victim, num_copies=num_copies, seed=seed, verbose=verbose)
+    elif defense_name == 'spellcheck_mv' or defense_name == 'sc_mv':
+        num_copies = int(param) if param > 0 else 7
+        return SpellCheckMVDefense(victim, num_copies=num_copies, seed=seed, verbose=verbose)
     else:
         raise ValueError(f"Unknown defense: {defense_name}. "
-                        f"Available: none, spellcheck, noise, dropout")
+                        f"Available: none, spellcheck, noise, dropout, identity, "
+                        f"majority_vote, spellcheck_mv")
