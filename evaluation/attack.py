@@ -190,17 +190,30 @@ else:
     victim = VictimCache(victim_model_path, base_victim)
 # dataset = dataset.select(range(10))
 
-# Filter data
+# Filter data - save predictions from the filter pass to avoid re-querying a stochastic defense.
+# Re-querying after filtering would give different results for stochastic defenses (e.g. MajorityVote),
+# making the confusion matrix show wrong "before attack" accuracy.
+y_pred_before = []
 if targeted:
-    dataset = [inst for inst in dataset if inst["y"] == 1 and victim.get_pred([inst["x"]])[0] == inst["y"]]
+    # Preserve the original short-circuit: only query the model for Class 1 samples.
+    # Querying Class 0 samples first would advance the RNG state and change which Class 1
+    # samples the stochastic defense classifies correctly, altering the attacked subset.
+    filtered = []
+    for inst in dataset:
+        if inst["y"] == 1:
+            pred = victim.get_pred([inst["x"]])[0]
+            if pred == inst["y"]:
+                filtered.append(inst)
+                y_pred_before.append(int(pred))
+    dataset = filtered
+else:
+    print("Collecting original predictions for confusion matrix...")
+    y_pred_before = [int(victim.get_pred([inst["x"]])[0]) for inst in dataset]
 print("Subset size: " + str(len(dataset)))
 # dataset = dataset [-10:]
 attack_texts = [inst["x"] for inst in dataset]
 
-# Track original labels and predictions for confusion matrix
 y_true = [inst["y"] for inst in dataset]
-print("Collecting original predictions for confusion matrix...")
-y_pred_before = [victim.get_pred([inst["x"]])[0] for inst in dataset]
 class_distribution = Counter(y_true)
 print(f"Class distribution: {dict(class_distribution)}")
 
@@ -227,11 +240,14 @@ elif attack_model_type == 'random':
 
 # Run the attack
 print("Evaluating the attack...")
-RAW_FILE_NAME = 'raw_' + task + '_' + str(targeted) + '_' + 'XARELLO' + '_' + victim_model_type + '.tsv'
+# Include defense_suffix so each defense run keeps its own raw file (avoids overwriting)
+RAW_FILE_NAME = f'raw_{task}_{targeted}_{attack_model_type}_{victim_model_type}{defense_suffix}.tsv'
 raw_path = out_dir / RAW_FILE_NAME if out_dir else None
 with no_ssl_verify():
-    # Use BERTscore instead of BLEURT (BLEURT causes mutex crash on macOS)
-    scorer = BODEGAScore(victim_device, task, align_sentences=True, semantic_scorer="BERTscore", raw_path=raw_path)
+    # Use BERTscore instead of BLEURT (BLEURT causes mutex crash on macOS with MPS)
+    # PR2 is a single-sentence task: align_sentences=True would call LAMBO but achieves nothing
+    align_sents = (task != 'PR2')
+    scorer = BODEGAScore(victim_device, task, align_sentences=align_sents, semantic_scorer="BERTscore", raw_path=raw_path)
 with no_ssl_verify():
     attack_eval = OpenAttack.AttackEval(attacker, victim, language='english', metrics=[
         scorer  # , OpenAttack.metric.EditDistance()
@@ -259,11 +275,18 @@ torch.cuda.empty_cache()
 if "TOKENIZERS_PARALLELISM" in os.environ:
     del os.environ["TOKENIZERS_PARALLELISM"]
 
-# Evaluate
+# Evaluate (batch computation of semantic similarity and BODEGA score)
 start = time.time()
 score_success, score_semantic, score_character, score_BODEGA = scorer.compute()
 end = time.time()
 evaluate_time = end - start
+
+# OpenAttack's summary table above shows 'nan' for BODEGA Score because BODEGAScore uses
+# deferred (batch) computation. Now that we have the real value, inject it and reprint.
+from OpenAttack.utils import result_visualizer
+summary["Avg. BODEGA Score"] = score_BODEGA
+print("\nCorrected summary (BODEGA Score computed after batch evaluation):")
+result_visualizer(summary, sys.stdout.write)
 
 # Print results
 print("=" * 50)
@@ -291,42 +314,42 @@ print("Time per example: " + str((attack_time) / len(dataset)))
 print("Total evaluation time: " + str(evaluate_time))
 
 # Compute and print confusion matrix
+# y_pred_before was saved during the filter pass (not re-queried), so these numbers are accurate
+# even for stochastic defenses.
 print("")
 print("=" * 50)
 print("CONFUSION MATRIX (Before Attack)")
 print("=" * 50)
-# Original model accuracy by class
-correct_by_class = {0: 0, 1: 0}
-total_by_class = {0: 0, 1: 0}
+correct_by_class = {}
+total_by_class = {}
 for yt, yp in zip(y_true, y_pred_before):
-    total_by_class[yt] += 1
+    total_by_class[yt] = total_by_class.get(yt, 0) + 1
     if yt == yp:
-        correct_by_class[yt] += 1
+        correct_by_class[yt] = correct_by_class.get(yt, 0) + 1
+for cls in sorted(total_by_class.keys()):
+    corr = correct_by_class.get(cls, 0)
+    tot = total_by_class[cls]
+    print(f"Class {cls}: {corr}/{tot} correct ({100*corr/tot:.1f}%)")
+total_corr = sum(correct_by_class.values())
+total_tot = sum(total_by_class.values())
+print(f"Overall: {total_corr}/{total_tot} correct ({100*total_corr/total_tot:.1f}%)")
 
-print(f"Class 0: {correct_by_class[0]}/{total_by_class[0]} correct ({100*correct_by_class[0]/max(1,total_by_class[0]):.1f}%)")
-print(f"Class 1: {correct_by_class[1]}/{total_by_class[1]} correct ({100*correct_by_class[1]/max(1,total_by_class[1]):.1f}%)")
-print(f"Overall: {sum(correct_by_class.values())}/{sum(total_by_class.values())} correct ({100*sum(correct_by_class.values())/max(1,sum(total_by_class.values())):.1f}%)")
-
-# Try to read raw results for per-sample attack success
-if raw_path and raw_path.exists():
-    print("")
-    print("=" * 50)
-    print("ATTACK SUCCESS BY CLASS")
-    print("=" * 50)
-    try:
-        import pandas as pd
-        raw_df = pd.read_csv(raw_path, sep='\t')
-        if 'success' in raw_df.columns:
-            # Merge with original labels
-            raw_df['y_true'] = y_true[:len(raw_df)]
-            success_by_class = raw_df.groupby('y_true')['success'].agg(['sum', 'count'])
-            for cls in [0, 1]:
-                if cls in success_by_class.index:
-                    succ = int(success_by_class.loc[cls, 'sum'])
-                    total = int(success_by_class.loc[cls, 'count'])
-                    print(f"Class {cls}: {succ}/{total} attacks succeeded ({100*succ/max(1,total):.1f}%)")
-    except Exception as e:
-        print(f"Could not parse raw results: {e}")
+# Attack success by class - computed directly from scorer.promises (promise.s2 is None for failures)
+print("")
+print("=" * 50)
+print("ATTACK SUCCESS BY CLASS")
+print("=" * 50)
+asc = {}
+for promise, y in zip(scorer.promises, y_true):
+    if y not in asc:
+        asc[y] = {"success": 0, "total": 0}
+    asc[y]["total"] += 1
+    if promise.s2 is not None:
+        asc[y]["success"] += 1
+for cls in sorted(asc.keys()):
+    succ = asc[cls]["success"]
+    total = asc[cls]["total"]
+    print(f"Class {cls}: {succ}/{total} attacks succeeded ({100*succ/max(1,total):.1f}%)")
 
 if out_dir:
     with open(out_dir / FILE_NAME, 'w') as f:
@@ -351,6 +374,14 @@ if out_dir:
         
         # Write confusion matrix
         f.write("\n# Confusion Matrix (Before Attack)\n")
-        f.write(f"Class 0: {correct_by_class[0]}/{total_by_class[0]} correct ({100*correct_by_class[0]/max(1,total_by_class[0]):.1f}%)\n")
-        f.write(f"Class 1: {correct_by_class[1]}/{total_by_class[1]} correct ({100*correct_by_class[1]/max(1,total_by_class[1]):.1f}%)\n")
-        f.write(f"Overall: {sum(correct_by_class.values())}/{sum(total_by_class.values())} correct ({100*sum(correct_by_class.values())/max(1,sum(total_by_class.values())):.1f}%)\n")
+        for cls in sorted(total_by_class.keys()):
+            corr = correct_by_class.get(cls, 0)
+            tot = total_by_class[cls]
+            f.write(f"Class {cls}: {corr}/{tot} correct ({100*corr/tot:.1f}%)\n")
+        f.write(f"Overall: {total_corr}/{total_tot} correct ({100*total_corr/total_tot:.1f}%)\n")
+        # Write attack success by class
+        f.write("\n# Attack Success By Class\n")
+        for cls in sorted(asc.keys()):
+            succ = asc[cls]["success"]
+            total = asc[cls]["total"]
+            f.write(f"Class {cls}: {succ}/{total} attacks succeeded ({100*succ/max(1,total):.1f}%)\n")
