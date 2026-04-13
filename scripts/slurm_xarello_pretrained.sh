@@ -23,7 +23,7 @@ VICTIM="BiLSTM"
 # Configure the two best static defenses here (from HPC results)
 # Format: "defense_name:param"
 # ====================================================================
-BEST_DEF_1="spellcheck:0"          # placeholder — update after HPC query
+BEST_DEF_1="spellcheck_mv:3"       # placeholder — update after HPC query
 BEST_DEF_2="spellcheck_mv:7"       # placeholder — update after HPC query
 
 DEFENSES=(

@@ -22,8 +22,8 @@ VICTIM="BiLSTM"
 # Configure the best static defense to train against (from HPC results)
 # These use XARELLO defense names: spellcheck, noise, dropout, majority_vote, spellcheck_mv
 # ====================================================================
-DEFENSE="spellcheck"       # placeholder — update after HPC query
-DEFENSE_PARAM="0"          # placeholder — update after HPC query
+DEFENSE="spellcheck_mv"    # placeholder — update after HPC query
+DEFENSE_PARAM="3"          # placeholder — update after HPC query
 
 i=$SLURM_ARRAY_TASK_ID
 TASK=${TASKS[$i]}

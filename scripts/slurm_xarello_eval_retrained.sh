@@ -22,8 +22,8 @@ VICTIM="BiLSTM"
 # ====================================================================
 # Must match slurm_xarello_train.sh settings
 # ====================================================================
-DEFENSE="spellcheck"       # placeholder — update after HPC query
-DEFENSE_PARAM="0"          # placeholder — update after HPC query
+DEFENSE="spellcheck_mv"    # placeholder — update after HPC query
+DEFENSE_PARAM="3"          # placeholder — update after HPC query
 
 EVAL_DEFENSES=(
     none:0
