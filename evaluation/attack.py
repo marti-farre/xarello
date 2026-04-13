@@ -63,6 +63,10 @@ parser.add_argument('--verbose', action='store_true',
                     help='Print defense modifications as they happen')
 parser.add_argument('--qmodel_path', type=str, default=None,
                     help='Path to XARELLO Q-model (overrides default path)')
+parser.add_argument('--semantic_scorer', type=str, default='BERTscore',
+                    help='Semantic scorer: BERTscore or BLEURT')
+parser.add_argument('--defense_policy', type=str, default=None,
+                    help='Path to MACABEU defense policy (for --defense macabeu)')
 
 # Check if using legacy positional args or new named args
 if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
@@ -84,10 +88,14 @@ if len(sys.argv) >= 7 and not sys.argv[1].startswith('--'):
         defense_seed = args.defense_seed
         verbose = args.verbose
         qmodel_path = args.qmodel_path
+        semantic_scorer = args.semantic_scorer
+        defense_policy = args.defense_policy
     else:
         defense_seed = 42
         verbose = False
         qmodel_path = None
+        semantic_scorer = 'BERTscore'
+        defense_policy = None
 else:
     # Named argument parsing
     args = parser.parse_args()
@@ -110,6 +118,8 @@ else:
     defense_seed = args.defense_seed
     verbose = args.verbose
     qmodel_path = args.qmodel_path
+    semantic_scorer = args.semantic_scorer
+    defense_policy = args.defense_policy
 
 # Build output filename including defense info
 defense_suffix = ''
@@ -181,7 +191,16 @@ elif victim_model_type == 'BiLSTM':
 
 # Apply defense wrapper if specified
 defended_victim = None
-if defense_type != 'none':
+if defense_type == 'macabeu':
+    from defenses.macabeu_defense import RLDefenseSelector
+    macabeu_policy = defense_policy
+    if not macabeu_policy:
+        macabeu_policy = str(pathlib.Path.home() / 'macabeu' / 'models' /
+                             f'{task}_{victim_model_type}.pth')
+    print(f"Applying MACABEU defense (policy={macabeu_policy})...")
+    defended_victim = RLDefenseSelector(base_victim, macabeu_policy, verbose=verbose)
+    victim = defended_victim
+elif defense_type != 'none':
     print(f"Applying {defense_type} defense (param={defense_param})...")
     defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed, verbose=verbose)
     # Skip caching when defense is active - defense transforms input so cache would be invalid
@@ -244,10 +263,9 @@ print("Evaluating the attack...")
 RAW_FILE_NAME = f'raw_{task}_{targeted}_{attack_model_type}_{victim_model_type}{defense_suffix}.tsv'
 raw_path = out_dir / RAW_FILE_NAME if out_dir else None
 with no_ssl_verify():
-    # Use BERTscore instead of BLEURT (BLEURT causes mutex crash on macOS with MPS)
     # PR2 is a single-sentence task: align_sentences=True would call LAMBO but achieves nothing
     align_sents = (task != 'PR2')
-    scorer = BODEGAScore(victim_device, task, align_sentences=align_sents, semantic_scorer="BERTscore", raw_path=raw_path)
+    scorer = BODEGAScore(victim_device, task, align_sentences=align_sents, semantic_scorer=semantic_scorer, raw_path=raw_path)
 with no_ssl_verify():
     attack_eval = OpenAttack.AttackEval(attacker, victim, language='english', metrics=[
         scorer  # , OpenAttack.metric.EditDistance()
@@ -297,9 +315,12 @@ print(f"Targeted: {targeted}")
 print(f"Attack: {attack_model_type}")
 print(f"Victim: {victim_model_type}")
 print(f"Defense: {defense_type}")
-if defense_type != 'none':
+if defense_type == 'macabeu':
+    print(f"Defense policy: {defense_policy}")
+elif defense_type != 'none':
     print(f"Defense param: {defense_param}")
     print(f"Defense seed: {defense_seed}")
+print(f"Semantic scorer: {semantic_scorer}")
 print("=" * 50)
 print("RESULTS")
 print("=" * 50)
