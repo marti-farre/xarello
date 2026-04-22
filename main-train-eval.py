@@ -47,7 +47,14 @@ victim_device = get_device()
 
 #task = 'PR2'
 #victim_model = 'BiLSTM'
-model_path = pathlib.Path.home() / 'data' / 'BODEGA' / task / (victim_model + '-512.pth')
+import os as _os
+_bodega_data = _os.environ.get('BODEGA_DATA_PATH')
+if _bodega_data:
+    model_path = pathlib.Path(_bodega_data) / task / (victim_model + '-512.pth')
+else:
+    _default = pathlib.Path.home() / 'BODEGA' / 'data' / task / (victim_model + '-512.pth')
+    model_path = _default if _default.exists() else \
+        pathlib.Path.home() / 'data' / 'BODEGA' / task / (victim_model + '-512.pth')
 plot_path = pathlib.Path(outpath_string) #pathlib.Path.home() / 'data' / 'xarello' / 'out'
 
 if victim_model == 'BiLSTM':
