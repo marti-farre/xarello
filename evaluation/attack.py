@@ -191,6 +191,7 @@ elif victim_model_type == 'BiLSTM':
 
 # Apply defense wrapper if specified
 defended_victim = None
+online_victim = None
 if defense_type == 'macabeu':
     from defenses.macabeu_defense import RLDefenseSelector
     macabeu_policy = defense_policy
@@ -200,6 +201,15 @@ if defense_type == 'macabeu':
     print(f"Applying MACABEU defense (policy={macabeu_policy})...")
     defended_victim = RLDefenseSelector(base_victim, macabeu_policy, verbose=verbose)
     victim = defended_victim
+elif defense_type == 'macabeu_online':
+    from defenses.macabeu_defense import OnlineRLDefenseSelector
+    pretrained = defense_policy  # optional warm-start path
+    print(f"Applying ONLINE MACABEU defense (warm_start={pretrained or 'none'})...")
+    online_victim = OnlineRLDefenseSelector(
+        base_victim, seed=defense_seed,
+        pretrained_path=pretrained, verbose=verbose)
+    defended_victim = online_victim
+    victim = online_victim
 elif defense_type != 'none':
     print(f"Applying {defense_type} defense (param={defense_param})...")
     defended_victim = get_defense(defense_type, base_victim, param=defense_param, seed=defense_seed, verbose=verbose)
@@ -266,10 +276,31 @@ with no_ssl_verify():
     # PR2 is a single-sentence task: align_sentences=True would call LAMBO but achieves nothing
     align_sents = (task != 'PR2')
     scorer = BODEGAScore(victim_device, task, align_sentences=align_sents, semantic_scorer=semantic_scorer, raw_path=raw_path)
+# Online learning hook: fires after each attacked example to update the
+# MACABEU policy. Registered as a metric so AttackEval calls it per-instance.
+class OnlineLearningHook(OpenAttack.AttackMetric):
+    NAME = "Online Learning Hook"
+
+    def __init__(self, online_selector):
+        self.online = online_selector
+
+    def after_attack(self, input, adversarial_sample):
+        true_label = input['y']
+        if adversarial_sample is not None:
+            # Re-query on the final adversarial text so the last
+            # (features, action) corresponds to what actually got attacked.
+            final_pred = int(self.online.get_pred([adversarial_sample])[0])
+        else:
+            final_pred = true_label  # defense held
+        self.online.observe_result(true_label, final_pred)
+        return None
+
+metrics = [scorer]
+if online_victim is not None:
+    metrics.append(OnlineLearningHook(online_victim))
+
 with no_ssl_verify():
-    attack_eval = OpenAttack.AttackEval(attacker, victim, language='english', metrics=[
-        scorer  # , OpenAttack.metric.EditDistance()
-    ])
+    attack_eval = OpenAttack.AttackEval(attacker, victim, language='english', metrics=metrics)
     start = time.time()
     summary = attack_eval.eval(dataset, visualize=True, progress_bar=False)
     end = time.time()
@@ -283,6 +314,28 @@ if defended_victim is not None and out_dir:
         mod_file = out_dir / f'modifications_{task}_{targeted}_{attack_model_type}_{victim_model_type}{defense_suffix}.tsv'
         defended_victim.save_modifications(str(mod_file))
         print(f"Saved {len(modifications)} defense modifications to {mod_file}")
+
+# Save online-trained MACABEU policy and action stats
+if online_victim is not None and out_dir:
+    model_out = out_dir / f'online_model_{task}_{victim_model_type}_{attack_model_type}.pth'
+    online_victim.save(str(model_out))
+    print(f"Saved online-trained policy to {model_out}")
+
+    action_stats = online_victim.get_action_statistics()
+    curve = online_victim.get_learning_curve(window=20)
+    stats_out = out_dir / f'online_stats_{task}_{victim_model_type}_{attack_model_type}.txt'
+    with open(stats_out, 'w') as f:
+        f.write("# Defense Action Distribution\n")
+        for name, s in action_stats.items():
+            f.write(f"{name}: {s['count']} ({s['pct']:.1f}%)\n")
+        f.write(f"\n# Learning Curve (window=20)\n")
+        for j, val in enumerate(curve):
+            f.write(f"{j},{val:.4f}\n")
+    print(f"Saved online stats to {stats_out}")
+    print("Defense action distribution:")
+    for name, s in action_stats.items():
+        if s['count'] > 0:
+            print(f"  {name:20s}: {s['count']:5d} ({s['pct']:.1f}%)")
 
 # Remove unused stuff
 if hasattr(victim, 'finalise'):

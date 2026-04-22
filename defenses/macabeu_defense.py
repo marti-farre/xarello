@@ -124,14 +124,27 @@ class DefenseQNetwork(nn.Module):
 class DefensePolicy:
     def __init__(self, n_features: int, n_actions: int,
                  action_names: List[str],
+                 lr: float = 1e-3,
+                 max_eps: float = 1.0,
+                 min_eps: float = 0.05,
+                 warmup_steps: int = 500,
                  device: torch.device = None):
         self.n_actions = n_actions
         self.action_names = action_names
         self.device = device or torch.device('cpu')
         self.q_net = DefenseQNetwork(n_features, n_actions).to(self.device)
+        self.optimizer = torch.optim.Adam(self.q_net.parameters(), lr=lr)
+        self.loss_fn = nn.MSELoss()
+        self.eps = max_eps
+        self.max_eps = max_eps
+        self.min_eps = min_eps
+        self.warmup_steps = warmup_steps
+        self.step_count = 0
 
     def select_action(self, features: np.ndarray,
                       greedy: bool = False) -> int:
+        if not greedy and random.random() < self.eps:
+            return random.randint(0, self.n_actions - 1)
         with torch.no_grad():
             feat_t = torch.tensor(
                 features, dtype=torch.float32
@@ -139,10 +152,40 @@ class DefensePolicy:
             q_values = self.q_net(feat_t)
             return q_values.argmax(dim=1).item()
 
+    def update(self, features_batch: np.ndarray, actions_batch: np.ndarray,
+               rewards_batch: np.ndarray) -> float:
+        feat_t = torch.tensor(features_batch, dtype=torch.float32).to(self.device)
+        act_t = torch.tensor(actions_batch, dtype=torch.long).to(self.device)
+        rew_t = torch.tensor(rewards_batch, dtype=torch.float32).to(self.device)
+        q_all = self.q_net(feat_t)
+        q_selected = q_all.gather(1, act_t.unsqueeze(1)).squeeze(1)
+        loss = self.loss_fn(q_selected, rew_t)
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+        self.step_count += 1
+        if self.step_count < self.warmup_steps:
+            self.eps = self.max_eps - (self.max_eps - self.min_eps) * self.step_count / self.warmup_steps
+        else:
+            self.eps = self.min_eps
+        return loss.item()
+
+    def save(self, path: str):
+        torch.save({
+            'q_net': self.q_net.state_dict(),
+            'step_count': self.step_count,
+            'eps': self.eps,
+            'action_names': self.action_names,
+            'n_features': self.q_net.network[0].in_features,
+            'n_actions': self.q_net.network[-1].out_features,
+        }, path)
+
     def load(self, path: str):
         checkpoint = torch.load(
             path, map_location=self.device, weights_only=False)
         self.q_net.load_state_dict(checkpoint['q_net'])
+        self.step_count = checkpoint.get('step_count', 0)
+        self.eps = checkpoint.get('eps', self.min_eps)
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +202,40 @@ DEFAULT_ACTION_SPACE = [
     ('spellcheck_mv', 3),
     ('char_noise', 0.10),
 ]
+
+DEFENSE_COSTS = {
+    0: 0.0,
+    1: 0.0,
+    2: 0.0,
+    3: 0.05,
+    4: 0.10,
+    5: 0.0,
+    6: 0.05,
+    7: 0.0,
+}
+
+
+class ReplayBuffer:
+    def __init__(self, capacity: int = 10000):
+        self.capacity = capacity
+        self.buffer = []
+        self.index = 0
+
+    def push(self, features: np.ndarray, action: int, reward: float):
+        if len(self.buffer) < self.capacity:
+            self.buffer.append(None)
+        self.buffer[self.index] = (features.copy(), action, reward)
+        self.index = (self.index + 1) % self.capacity
+
+    def sample(self, batch_size: int):
+        batch = random.sample(self.buffer, min(batch_size, len(self.buffer)))
+        features = np.array([b[0] for b in batch])
+        actions = np.array([b[1] for b in batch])
+        rewards = np.array([b[2] for b in batch])
+        return features, actions, rewards
+
+    def __len__(self):
+        return len(self.buffer)
 
 
 def get_action_names(action_space=None):
@@ -250,3 +327,147 @@ class RLDefenseSelector(OpenAttack.Classifier):
     def finalise(self):
         if hasattr(self.victim, 'finalise'):
             self.victim.finalise()
+
+
+# ---------------------------------------------------------------------------
+# OnlineRLDefenseSelector (from macabeu/agent/online_selector.py)
+# ---------------------------------------------------------------------------
+
+class OnlineRLDefenseSelector(OpenAttack.Classifier):
+    """Adaptive defense selector that learns online during attacks.
+
+    Each call to get_prob/get_pred extracts features, picks a defense via
+    epsilon-greedy, and tracks the last (features, action) for later reward
+    assignment. Call `observe_result(true_label, pred_after_attack)` after
+    each attacked example to inject the reward and update the Q-network.
+    """
+
+    def __init__(self, victim, action_space=None, seed: int = 42,
+                 lr: float = 1e-3, max_eps: float = 1.0,
+                 min_eps: float = 0.05, warmup_examples: int = 50,
+                 batch_size: int = 16, buffer_size: int = 5000,
+                 pretrained_path: str = None, verbose: bool = False):
+        self.victim = victim
+        self.action_space = action_space or DEFAULT_ACTION_SPACE
+        self.verbose = verbose
+        self.batch_size = batch_size
+        self.feature_extractor = TextFeatureExtractor()
+
+        n_features = TextFeatureExtractor.NUM_FEATURES
+        n_actions = len(self.action_space)
+        action_names = get_action_names(self.action_space)
+
+        self.policy = DefensePolicy(
+            n_features=n_features, n_actions=n_actions,
+            action_names=action_names, lr=lr,
+            max_eps=max_eps, min_eps=min_eps,
+            warmup_steps=warmup_examples)
+
+        if pretrained_path:
+            self.policy.load(pretrained_path)
+            self.policy.eps = max_eps
+            self.policy.step_count = 0
+            self.policy.warmup_steps = warmup_examples
+
+        self.replay_buffer = ReplayBuffer(capacity=buffer_size)
+
+        bodega_get_defense = _load_bodega_get_defense()
+        self.defenses = {}
+        for i, (defense_name, param) in enumerate(self.action_space):
+            if defense_name == 'none':
+                self.defenses[i] = victim
+            else:
+                self.defenses[i] = bodega_get_defense(
+                    defense_name, victim, param=param,
+                    seed=seed, verbose=False)
+
+        self._current_features = None
+        self._current_action = None
+        self._current_text = None
+
+        self.action_counts = np.zeros(n_actions, dtype=int)
+        self.example_count = 0
+        self.total_reward = 0.0
+        self.reward_history = []
+
+    def get_pred(self, input_: List[str]) -> np.ndarray:
+        return self.get_prob(input_).argmax(axis=1)
+
+    def get_prob(self, input_: List[str]) -> np.ndarray:
+        all_probs = []
+        for text in input_:
+            features = self.feature_extractor.extract(text)
+            action = self.policy.select_action(features, greedy=False)
+            self.action_counts[action] += 1
+
+            self._current_features = features
+            self._current_action = action
+            self._current_text = text
+
+            if self.verbose:
+                print(f"[ONLINE_RL] eps={self.policy.eps:.3f} "
+                      f"action={self.policy.action_names[action]} "
+                      f"| {text[:50]}...")
+
+            prob = self.defenses[action].get_prob([text])
+            all_probs.append(prob[0])
+        return np.array(all_probs)
+
+    def observe_result(self, true_label: int, prediction_after_attack: int):
+        if self._current_features is None:
+            return
+
+        correct = 1.0 if prediction_after_attack == true_label else -1.0
+        cost = DEFENSE_COSTS.get(self._current_action, 0.0)
+        reward = correct - cost
+
+        self.replay_buffer.push(
+            self._current_features, self._current_action, reward)
+
+        self.total_reward += reward
+        self.example_count += 1
+        self.reward_history.append(reward)
+
+        if len(self.replay_buffer) >= self.batch_size:
+            f_batch, a_batch, r_batch = self.replay_buffer.sample(self.batch_size)
+            loss = self.policy.update(f_batch, a_batch, r_batch)
+            if self.verbose and self.example_count % 20 == 0:
+                avg_recent = np.mean(self.reward_history[-20:])
+                print(f"[ONLINE_RL] Example {self.example_count} | "
+                      f"loss={loss:.4f} | eps={self.policy.eps:.3f} | "
+                      f"avg_reward(20)={avg_recent:.3f}")
+
+        self._current_features = None
+        self._current_action = None
+
+    def get_action_statistics(self) -> dict:
+        total = max(self.action_counts.sum(), 1)
+        stats = {}
+        for i, name in enumerate(self.policy.action_names):
+            count = int(self.action_counts[i])
+            stats[name] = {'count': count, 'pct': round(count / total * 100, 1)}
+        return stats
+
+    def get_learning_curve(self, window: int = 20) -> List[float]:
+        if len(self.reward_history) < window:
+            return list(self.reward_history)
+        curve = []
+        for i in range(window, len(self.reward_history) + 1):
+            curve.append(float(np.mean(self.reward_history[i - window:i])))
+        return curve
+
+    def get_modifications(self):
+        return []
+
+    def save_modifications(self, path: str):
+        pass
+
+    def clear_modifications(self):
+        pass
+
+    def finalise(self):
+        if hasattr(self.victim, 'finalise'):
+            self.victim.finalise()
+
+    def save(self, path: str):
+        self.policy.save(path)
