@@ -35,7 +35,7 @@ module load Miniconda3
 eval "$(conda shell.bash hook)"
 conda activate bodega
 export PYTHONPATH="$HOME/BODEGA:$PYTHONPATH"
-mkdir -p "$OUT_DIR" logs
+mkdir -p "$OUT_PATH" logs
 
 echo "[$i] Train XARELLO vs $DEFENSE | $TASK | $VICTIM"
 
