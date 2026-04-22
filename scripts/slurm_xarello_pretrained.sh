@@ -8,7 +8,7 @@
 # Submit with: cd ~/xarello && sbatch scripts/slurm_xarello_pretrained.sh
 
 #SBATCH -J xar_pre
-#SBATCH -p medium
+#SBATCH -p high
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH -c 4

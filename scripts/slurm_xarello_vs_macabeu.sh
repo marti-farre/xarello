@@ -9,7 +9,7 @@
 # Submit with: cd ~/xarello && sbatch scripts/slurm_xarello_vs_macabeu.sh
 
 #SBATCH -J xar_mac
-#SBATCH -p medium
+#SBATCH -p high
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
 #SBATCH -c 4
