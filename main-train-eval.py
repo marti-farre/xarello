@@ -48,13 +48,14 @@ victim_device = get_device()
 #task = 'PR2'
 #victim_model = 'BiLSTM'
 import os as _os
-_bodega_data = _os.environ.get('BODEGA_DATA_PATH')
-if _bodega_data:
-    model_path = pathlib.Path(_bodega_data) / task / (victim_model + '-512.pth')
+_env_data = _os.environ.get('BODEGA_DATA_PATH')
+if _env_data:
+    data_dir = pathlib.Path(_env_data)
+elif (pathlib.Path.home() / 'BODEGA' / 'data').is_dir():
+    data_dir = pathlib.Path.home() / 'BODEGA' / 'data'
 else:
-    _default = pathlib.Path.home() / 'BODEGA' / 'data' / task / (victim_model + '-512.pth')
-    model_path = _default if _default.exists() else \
-        pathlib.Path.home() / 'data' / 'BODEGA' / task / (victim_model + '-512.pth')
+    data_dir = pathlib.Path.home() / 'data' / 'BODEGA'
+model_path = data_dir / task / (victim_model + '-512.pth')
 plot_path = pathlib.Path(outpath_string) #pathlib.Path.home() / 'data' / 'xarello' / 'out'
 
 if victim_model == 'BiLSTM':
@@ -88,10 +89,10 @@ EVAL_SIZE = 400
 if task == 'FC':
     all_texts = [
         line.split('\t')[2].strip().replace('\\n', '\n') + ' ~ ' + line.split('\t')[3].strip().replace('\\n', '\n')
-        for line in open(pathlib.Path.home() / 'data' / 'BODEGA' / task / 'dev.tsv')]
+        for line in open(data_dir / task / 'dev.tsv')]
 else:
     all_texts = [line.split('\t')[2].strip().replace('\\n', '\n') for line in
-                  open(pathlib.Path.home() / 'data' / 'BODEGA' / task / 'dev.tsv')]
+                  open(data_dir / task / 'dev.tsv')]
 eval_texts = all_texts[:EVAL_SIZE]
 train_texts = all_texts[EVAL_SIZE:(EVAL_SIZE + TRAIN_SIZE)]
 print("Using train set size: "+str(len(train_texts))+" and eval set size: "+str(len(eval_texts)))
