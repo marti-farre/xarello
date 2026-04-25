@@ -9,9 +9,9 @@
 #SBATCH -J xar_trn
 #SBATCH -p high
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH -c 4
-#SBATCH --array=0-3
+#SBATCH --array=2-3
 #SBATCH -o logs/xar_trn_%A_%a.out
 #SBATCH -e logs/xar_trn_%A_%a.err
 
@@ -31,6 +31,13 @@ TASK=${TASKS[$i]}
 OUT_DIR="models/trained_vs_${DEFENSE}"
 OUT_PATH="$OUT_DIR/${TASK}_${VICTIM}"
 
+# Resume from latest saved checkpoint (HN OOMed at ep 6, RD at ep 11)
+case "$TASK" in
+    HN) export XARELLO_STARTING_EPOCH=6 ;;
+    RD) export XARELLO_STARTING_EPOCH=11 ;;
+    *)  export XARELLO_STARTING_EPOCH=0 ;;
+esac
+
 module load Miniconda3
 eval "$(conda shell.bash hook)"
 conda activate bodega
@@ -39,9 +46,10 @@ mkdir -p "$OUT_PATH" logs
 
 echo "[$i] Train XARELLO vs $DEFENSE | $TASK | $VICTIM"
 
-# Check if already trained
-if [ -f "$OUT_PATH/xarello-qmodel.pth" ]; then
-    echo "Model already exists at $OUT_PATH, skipping..."
+# Skip only if a fully-trained final model marker exists.
+# (We rely on XARELLO_STARTING_EPOCH for OOM-resume; do not skip on partial runs.)
+if [ -f "$OUT_PATH/training_config.txt" ]; then
+    echo "Final config marker found at $OUT_PATH, skipping..."
     exit 0
 fi
 

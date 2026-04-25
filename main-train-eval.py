@@ -117,8 +117,9 @@ save_all_models = True
 save_path=pathlib.Path(outpath_string) / ('xarello-qmodel.pth')
 #agent.load_from_path(save_path)
 
-STARTING_EPOCH = 0
-STARTING_EPISODES = 0
+STARTING_EPOCH = int(_os.environ.get('XARELLO_STARTING_EPOCH', '0'))
+EPISODES_PER_EPOCH = len(train_texts) * train_env.EPISODES_PER_TEXT
+STARTING_EPISODES = STARTING_EPOCH * EPISODES_PER_EPOCH
 if STARTING_EPOCH>0:
     # load model
     agent = Qlearner(train_env, pretrained_model, warmup_episodes, attacker_device, longterm_memory=True,
