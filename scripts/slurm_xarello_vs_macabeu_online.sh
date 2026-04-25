@@ -13,22 +13,25 @@
 #SBATCH -J xar_mac_on
 #SBATCH -p high
 #SBATCH --gres=gpu:1
-#SBATCH --mem=32G
+#SBATCH --mem=48G
 #SBATCH -c 4
 #SBATCH --array=0-3
 #SBATCH -o logs/xar_mac_on_%A_%a.out
 #SBATCH -e logs/xar_mac_on_%A_%a.err
 
 TASKS=(PR2 FC HN RD)
-VICTIM="BiLSTM"
+VICTIM="${XARELLO_VICTIM:-BiLSTM}"
 
 i=$SLURM_ARRAY_TASK_ID
 TASK=${TASKS[$i]}
 
 DATA_PATH="$HOME/BODEGA/data/$TASK"
-MODEL_PATH="$HOME/BODEGA/data/$TASK/${VICTIM}-512.pth"
+case "$VICTIM" in
+    GEMMA) MODEL_PATH="$HOME/BODEGA/data/$TASK/GEMMA-512" ;;
+    *)     MODEL_PATH="$HOME/BODEGA/data/$TASK/${VICTIM}-512.pth" ;;
+esac
 MACABEU_POLICY="$HOME/macabeu/models/${TASK}_${VICTIM}.pth"
-OUT_DIR="results/xarello_vs_macabeu_online"
+OUT_DIR="results/xarello_vs_macabeu_online/${VICTIM}"
 
 module load Miniconda3
 eval "$(conda shell.bash hook)"
