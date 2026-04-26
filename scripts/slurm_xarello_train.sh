@@ -9,6 +9,7 @@
 #SBATCH -J xar_trn
 #SBATCH -p high
 #SBATCH --gres=gpu:1
+#SBATCH --constraint=cuda
 #SBATCH --mem=64G
 #SBATCH -c 4
 #SBATCH --array=2-3
