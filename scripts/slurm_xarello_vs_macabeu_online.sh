@@ -34,8 +34,7 @@ esac
 MACABEU_POLICY="$HOME/macabeu/models/${TASK}_${VICTIM}.pth"
 OUT_DIR="results/xarello_vs_macabeu_online/${VICTIM}"
 
-module load Miniconda3
-eval "$(conda shell.bash hook)"
+source /soft/easybuild/x86_64/software/Miniconda3/22.11.1-1/etc/profile.d/conda.sh
 conda activate bodega
 export PYTHONPATH="$HOME/BODEGA:$PYTHONPATH"
 export BODEGA_PATH="$HOME/BODEGA"
