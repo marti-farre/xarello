@@ -34,9 +34,13 @@ case "$VICTIM" in
 esac
 OUT_DIR="results/xarello_retrained_vs_${DEFENSE}"
 
-module load Miniconda3
-eval "$(conda shell.bash hook)"
-conda activate bodega
+# Robust env activation (see slurm_xarello_train_bert_gemma.sh).
+if [ -f /soft/easybuild/x86_64/software/Miniconda3/22.11.1-1/etc/profile.d/conda.sh ]; then
+    source /soft/easybuild/x86_64/software/Miniconda3/22.11.1-1/etc/profile.d/conda.sh
+    conda activate bodega
+else
+    export PATH="$HOME/.conda/envs/bodega/bin:$PATH"
+fi
 export PYTHONPATH="$HOME/BODEGA:$PYTHONPATH"
 export BODEGA_PATH="$HOME/BODEGA"
 mkdir -p "$OUT_DIR" logs
