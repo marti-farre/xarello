@@ -32,7 +32,8 @@ OUT_PATH="$OUT_DIR/${TASK}_${VICTIM}"
 
 export XARELLO_STARTING_EPOCH=0
 
-source /soft/easybuild/x86_64/software/Miniconda3/22.11.1-1/etc/profile.d/conda.sh
+module load Miniconda3
+eval "$(conda shell.bash hook)"
 conda activate bodega
 export PYTHONPATH="$HOME/BODEGA:$PYTHONPATH"
 mkdir -p "$OUT_PATH" logs
