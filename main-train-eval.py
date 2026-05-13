@@ -55,7 +55,10 @@ elif (pathlib.Path.home() / 'BODEGA' / 'data').is_dir():
     data_dir = pathlib.Path.home() / 'BODEGA' / 'data'
 else:
     data_dir = pathlib.Path.home() / 'data' / 'BODEGA'
-model_path = data_dir / task / (victim_model + '-512.pth')
+if victim_model in ('GEMMA', 'GEMMA7B'):
+    model_path = data_dir / task / (victim_model + '-512')
+else:
+    model_path = data_dir / task / (victim_model + '-512.pth')
 plot_path = pathlib.Path(outpath_string) #pathlib.Path.home() / 'data' / 'xarello' / 'out'
 
 if victim_model == 'BiLSTM':
