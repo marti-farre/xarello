@@ -6,6 +6,12 @@
 #   cd ~/xarello
 #   sbatch --export=ALL,XARELLO_VICTIM=BERT  scripts/slurm_xarello_train_bert_gemma.sh
 #   sbatch --export=ALL,XARELLO_VICTIM=GEMMA scripts/slurm_xarello_train_bert_gemma.sh
+#
+# OOM-resume a single failed cell from the latest saved checkpoint
+# (xarello-qmodel.pth-N in the per-cell OUT_PATH):
+#   sbatch --array=2 --mem=128G \
+#          --export=ALL,XARELLO_VICTIM=BERT,XARELLO_STARTING_EPOCH=14 \
+#          scripts/slurm_xarello_train_bert_gemma.sh
 
 #SBATCH -J xar_trn_bg
 #SBATCH -p high
@@ -30,7 +36,7 @@ TASK=${TASKS[$i]}
 OUT_DIR="models/trained_vs_${DEFENSE}"
 OUT_PATH="$OUT_DIR/${TASK}_${VICTIM}"
 
-export XARELLO_STARTING_EPOCH=0
+export XARELLO_STARTING_EPOCH="${XARELLO_STARTING_EPOCH:-0}"
 
 # Robust env activation: try the easybuild conda first (present on most
 # compute nodes); fall back to direct PATH manipulation on nodes that lack it.
